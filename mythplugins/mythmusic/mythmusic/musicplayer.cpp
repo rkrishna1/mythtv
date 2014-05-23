@@ -223,6 +223,8 @@ void MusicPlayer::loadSettings(void )
     QString resumestring = gCoreContext->GetSetting("ResumeMode", "off");
     if (resumestring.toLower() == "off")
         m_resumeMode = RESUME_OFF;
+    else if (resumestring.toLower() == "first")
+        m_resumeMode = RESUME_FIRST;
     else if (resumestring.toLower() == "track")
         m_resumeMode = RESUME_TRACK;
     else
@@ -515,9 +517,6 @@ void MusicPlayer::StartPlayback(void)
     if (!gCoreContext->InWantingPlayback() && m_wasPlaying)
     {
         play();
-        seek(gCoreContext->GetNumSetting("MusicBookmarkPosition", 0));
-        gCoreContext->SaveSetting("MusicBookmark", "");
-        gCoreContext->SaveSetting("MusicBookmarkPosition", 0);
 
         m_wasPlaying = false;
     }
@@ -525,7 +524,7 @@ void MusicPlayer::StartPlayback(void)
 
 void MusicPlayer::StopPlayback(void)
 {
-    if (m_isPlaying)
+    if (m_output)
     {
         m_wasPlaying = m_isPlaying;
 
@@ -988,7 +987,7 @@ void MusicPlayer::restorePosition(void)
     m_currentTrack = 0;
     uint id = -1;
 
-    if (gPlayer->getResumeMode() > MusicPlayer::RESUME_OFF)
+    if (gPlayer->getResumeMode() > MusicPlayer::RESUME_FIRST)
     {
         if (m_playMode == PLAYMODE_RADIO)
             id = gCoreContext->GetNumSetting("MusicRadioBookmark", 0);
@@ -1010,7 +1009,8 @@ void MusicPlayer::restorePosition(void)
 
     if (getCurrentMetadata())
     {
-        play();
+        if (gPlayer->getResumeMode() > MusicPlayer::RESUME_OFF)
+            play();
 
         if (gPlayer->getResumeMode() == MusicPlayer::RESUME_EXACT && m_playMode == PLAYMODE_TRACKS)
             seek(gCoreContext->GetNumSetting("MusicBookmarkPosition", 0));
