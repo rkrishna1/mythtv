@@ -379,7 +379,6 @@ bool FileRingBuffer::OpenFile(const QString &lfilename, uint retry_ms)
     commserror = false;
     numfailures = 0;
 
-    rawbitrate = 8000;
     CalcReadAheadThresh();
 
     bool ok = fd2 >= 0 || remotefile;
@@ -585,41 +584,45 @@ long long FileRingBuffer::GetReadPosition(void) const
     return ret;
 }
 
-long long FileRingBuffer::GetRealFileSize(void) const
+long long FileRingBuffer::GetRealFileSizeInternal(void) const
 {
     rwlock.lockForRead();
     long long ret = -1;
     if (remotefile)
-        ret = remotefile->GetFileSize();
+    {
+        ret = remotefile->GetRealFileSize();
+    }
     else
+    {
+        if (fd2 >= 0)
+        {
+            struct stat sb;
+
+            ret = fstat(fd2, &sb);
+            if (ret == 0 && S_ISREG(sb.st_mode))
+            {
+                rwlock.unlock();
+                return sb.st_size;
+            }
+        }
         ret = QFileInfo(filename).size();
+    }
     rwlock.unlock();
     return ret;
 }
 
-long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
+long long FileRingBuffer::SeekInternal(long long pos, int whence)
 {
-    LOG(VB_FILE, LOG_INFO, LOC + QString("Seek(%1,%2,%3)")
-            .arg(pos).arg((SEEK_SET==whence)?"SEEK_SET":
-                          ((SEEK_CUR==whence)?"SEEK_CUR":"SEEK_END"))
-            .arg(has_lock?"locked":"unlocked"));
-
     long long ret = -1;
 
+    // Ticket 12128
     StopReads();
-
-    // lockForWrite takes priority over lockForRead, so this will
-    // take priority over the lockForRead in the read ahead thread.
-    if (!has_lock)
-        rwlock.lockForWrite();
-
     StartReads();
 
     if (writemode)
     {
         ret = WriterSeek(pos, whence, true);
-        if (!has_lock)
-            rwlock.unlock();
+
         return ret;
     }
 
@@ -633,8 +636,6 @@ long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
         ret = readpos;
 
         poslock.unlock();
-        if (!has_lock)
-            rwlock.unlock();
 
         return ret;
     }
@@ -642,7 +643,6 @@ long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
     // only valid for SEEK_SET & SEEK_CUR
     long long new_pos = (SEEK_SET==whence) ? pos : readpos + pos;
 
-#if 1
     // Optimize short seeks where the data for
     // them is in our ringbuffer already.
     if (readaheadrunning &&
@@ -658,6 +658,7 @@ long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
         bool used_opt = false;
         if ((new_pos < readpos))
         {
+            // Seeking to earlier than current buffer's start, but still in buffer
             int min_safety = max(fill_min, readblocksize);
             int free = ((rbwpos >= rbrpos) ?
                         rbrpos + bufferSize : rbrpos) - rbwpos;
@@ -719,18 +720,18 @@ long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
             // end, so we need to recheck if reads are allowed.
             if (new_pos > readpos)
             {
-                ateof = false;
-                readsallowed = false;
+                ateof           = false;
+                readsallowed    = false;
+                readsdesired    = false;
+                recentseek      = true;
             }
             readpos = new_pos;
             poslock.unlock();
             generalWait.wakeAll();
-            if (!has_lock)
-                rwlock.unlock();
+
             return new_pos;
         }
     }
-#endif
 
 #if 1
     // This optimizes the seek end-250000, read, seek 0, read portion 
@@ -830,16 +831,15 @@ long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
             }
             else
             {
-                ateof = false;
-                readsallowed = false;
+                ateof           = false;
+                readsallowed    = false;
+                readsdesired    = false;
+                recentseek      = true;
             }
 
             poslock.unlock();
 
             generalWait.wakeAll();
-
-            if (!has_lock)
-                rwlock.unlock();
 
             return ret;
         }
@@ -882,9 +882,6 @@ long long FileRingBuffer::Seek(long long pos, int whence, bool has_lock)
     poslock.unlock();
 
     generalWait.wakeAll();
-
-    if (!has_lock)
-        rwlock.unlock();
 
     return ret;
 }

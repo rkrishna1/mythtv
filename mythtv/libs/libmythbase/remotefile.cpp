@@ -32,6 +32,9 @@ using namespace std;
 #include "mythdate.h"
 #include "mythmiscutil.h"
 #include "threadedfilewriter.h"
+#include "storagegroup.h"
+
+#define MAX_FILE_CHECK 500  // in ms
 
 RemoteFile::RemoteFile(const QString &_path, bool write, bool useRA,
                        int _timeout_ms,
@@ -39,11 +42,12 @@ RemoteFile::RemoteFile(const QString &_path, bool write, bool useRA,
     path(_path),
     usereadahead(useRA),  timeout_ms(_timeout_ms),
     filesize(-1),         timeoutisfast(false),
-    readposition(0),      recordernum(0),
+    readposition(0LL),    lastposition(0LL),
+    canresume(false),     recordernum(0),
     lock(QMutex::NonRecursive),
     controlSock(NULL),    sock(NULL),
     query("QUERY_FILETRANSFER %1"),
-    writemode(write),
+    writemode(write),     completed(false),
     localFile(NULL),      fileWriter(NULL)
 {
     if (writemode)
@@ -77,7 +81,7 @@ RemoteFile::~RemoteFile()
 
 bool RemoteFile::isLocal(const QString &path)
 {
-    bool is_local =
+    bool is_local = !path.isEmpty() &&
         !path.startsWith("/dev") && !path.startsWith("myth:") &&
         (path.startsWith("/") || QFile::exists(path));
     return is_local;
@@ -118,11 +122,7 @@ MythSocket *RemoteFile::openSocket(bool control)
 
     if (port <= 0)
     {
-        port = GetMythDB()->GetSettingOnHost("BackendServerPort", host).toInt();
-
-        // if we still have no port use the default
-        if (port <= 0)
-            port = 6543;
+        port = gCoreContext->GetBackendServerPort(host);
     }
 
     if (!lsock->ConnectToHost(host, port))
@@ -138,7 +138,7 @@ MythSocket *RemoteFile::openSocket(bool control)
     QStringList strlist;
 
 #ifndef IGNORE_PROTO_VER_MISMATCH
-    if (!gCoreContext->CheckProtoVersion(lsock))
+    if (!gCoreContext->CheckProtoVersion(lsock, 5000))
     {
         LOG(VB_GENERAL, LOG_ERR, loc +
             QString("Failed validation to server %1:%2").arg(host).arg(port));
@@ -236,7 +236,16 @@ bool RemoteFile::Open(void)
         return true;
 
     QMutexLocker locker(&lock);
+    return OpenInternal();
+}
 
+/** \fn RemoteFile::OpenInternal(void)
+ *  \brief Attempts to resume from a disconnected step. Must have lock
+ *  \return True if reconnection succeeded
+ *  \param bool indicating we own the lock
+ */
+bool RemoteFile::OpenInternal()
+{
     if (isLocal())
     {
         if (!Exists(path))
@@ -283,10 +292,11 @@ bool RemoteFile::Open(void)
     {
         // Close the sockets if we received an error so that isOpen() will
         // return false if the caller tries to use the RemoteFile.
-        locker.unlock();
-        Close();
+        Close(true);
         return false;
     }
+    canresume = true;
+
     return true;
 }
 
@@ -301,15 +311,14 @@ bool RemoteFile::ReOpen(QString newFilename)
         path = newFilename;
         return Open();
     }
-    lock.lock();
-    if (!sock)
+
+    QMutexLocker locker(&lock);
+
+    if (!CheckConnection(false))
     {
-        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::ReOpen(): Called with no socket");
+        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::ReOpen(): Couldn't connect");
         return false;
     }
-
-    if (!sock->IsConnected() || !controlSock->IsConnected())
-        return -1;
 
     QStringList strlist( QString(query).arg(recordernum) );
     strlist << "REOPEN";
@@ -326,7 +335,7 @@ bool RemoteFile::ReOpen(QString newFilename)
     return retval;
 }
 
-void RemoteFile::Close(void)
+void RemoteFile::Close(bool haslock)
 {
     if (isLocal())
     {
@@ -342,8 +351,11 @@ void RemoteFile::Close(void)
     QStringList strlist( QString(query).arg(recordernum) );
     strlist << "DONE";
 
-    lock.lock();
-    if (!controlSock->SendReceiveStringList(
+    if (!haslock)
+    {
+        lock.lock();
+    }
+    if (controlSock->IsConnected() && !controlSock->SendReceiveStringList(
             strlist, 0, MythSocket::kShortTimeout))
     {
         LOG(VB_GENERAL, LOG_ERR, "Remote file timeout.");
@@ -360,7 +372,10 @@ void RemoteFile::Close(void)
         controlSock = NULL;
     }
 
-    lock.unlock();
+    if (!haslock)
+    {
+        lock.unlock();
+    }
 }
 
 bool RemoteFile::DeleteFile(const QString &url)
@@ -399,36 +414,59 @@ bool RemoteFile::DeleteFile(const QString &url)
 
 bool RemoteFile::Exists(const QString &url)
 {
+    if (url.isEmpty())
+        return false;
+
     struct stat fileinfo;
     return Exists(url, &fileinfo);
 }
 
 bool RemoteFile::Exists(const QString &url, struct stat *fileinfo)
 {
-    if (isLocal(url))
-    {
-       LOG(VB_FILE, LOG_INFO,
-           QString("RemoteFile::Exists(): looking for local file: %1").arg(url));
-
-        QFileInfo info(url);
-        if (info.exists())
-        {
-            if (stat(url.toLocal8Bit().constData(), fileinfo) == -1)
-            {
-                LOG(VB_FILE, LOG_ERR,
-                    QString("RemoteFile::Exists(): failed to stat file: %1").arg(url) + ENO);
-            }
-        }
-
-        return info.exists() && info.isFile();
-    }
-
-    LOG(VB_FILE, LOG_INFO,
-        QString("RemoteFile::Exists(): looking for remote file: %1").arg(url));
+    if (url.isEmpty())
+        return false;
 
     QUrl qurl(url);
     QString filename = qurl.path();
     QString sgroup   = qurl.userName();
+    QString host     = qurl.host();
+
+    if (isLocal(url) || gCoreContext->IsThisBackend(host))
+    {
+       LOG(VB_FILE, LOG_INFO,
+           QString("RemoteFile::Exists(): looking for local file: %1").arg(url));
+
+        bool fileExists = false;
+        QString fullFilePath = "";
+
+        if (url.startsWith("myth:"))
+        {
+            StorageGroup sGroup(sgroup, host);
+            fullFilePath = sGroup.FindFile(filename);
+            if (!fullFilePath.isEmpty())
+                fileExists = true;
+        }
+        else
+        {
+            QFileInfo info(url);
+            fileExists = info.exists() && info.isFile();
+            fullFilePath = url;
+        }
+
+        if (fileExists)
+        {
+            if (stat(fullFilePath.toLocal8Bit().constData(), fileinfo) == -1)
+            {
+                LOG(VB_FILE, LOG_ERR,
+                    QString("RemoteFile::Exists(): failed to stat file: %1").arg(fullFilePath) + ENO);
+            }
+        }
+
+        return fileExists;
+    }
+
+    LOG(VB_FILE, LOG_INFO,
+        QString("RemoteFile::Exists(): looking for remote file: %1").arg(url));
 
     if (!qurl.fragment().isEmpty() || url.endsWith("#"))
         filename = filename + "#" + qurl.fragment();
@@ -529,6 +567,11 @@ long long RemoteFile::Seek(long long pos, int whence, long long curpos)
 {
     QMutexLocker locker(&lock);
 
+    return SeekInternal(pos, whence, curpos);
+}
+
+long long RemoteFile::SeekInternal(long long pos, int whence, long long curpos)
+{
     if (isLocal())
     {
         if (!isOpen())
@@ -564,14 +607,9 @@ long long RemoteFile::Seek(long long pos, int whence, long long curpos)
         return localFile->pos();
     }
 
-    if (!sock)
+    if (!CheckConnection(false))
     {
-        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::Seek(): Called with no socket");
-        return -1;
-    }
-
-    if (!sock->IsConnected() || !controlSock->IsConnected())
-    {
+        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::Seek(): Couldn't connect");
         return -1;
     }
 
@@ -588,9 +626,13 @@ long long RemoteFile::Seek(long long pos, int whence, long long curpos)
 
     if (ok && !strlist.isEmpty())
     {
-        readposition = strlist[0].toLongLong();
+        lastposition = readposition = strlist[0].toLongLong();
         sock->Reset();
         return strlist[0].toLongLong();
+    }
+    else
+    {
+        lastposition = 0LL;
     }
 
     return -1;
@@ -622,14 +664,10 @@ int RemoteFile::Write(const void *data, int size)
     }
 
     QMutexLocker locker(&lock);
-    if (!sock)
-    {
-        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::Write(): Called with no socket");
-        return -1;
-    }
 
-    if (!sock->IsConnected() || !controlSock->IsConnected())
+    if (!CheckConnection())
     {
+        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::Write(): Couldn't connect");
         return -1;
     }
 
@@ -691,7 +729,13 @@ int RemoteFile::Write(const void *data, int size)
         return recv;
 
     if (error || recv != sent)
+    {
         sent = -1;
+    }
+    else
+    {
+        lastposition += sent;
+    }
 
     return sent;
 }
@@ -720,14 +764,12 @@ int RemoteFile::Read(void *data, int size)
         LOG(VB_FILE, LOG_ERR, "RemoteFile:Read() called when local file not opened");
         return -1;
     }
-    if (!sock)
+
+    if (!CheckConnection())
     {
-        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::Read(): Called with no socket");
+        LOG(VB_NETWORK, LOG_ERR, "RemoteFile::Read(): Couldn't connect");
         return -1;
     }
-
-    if (!sock->IsConnected() || !controlSock->IsConnected())
-        return -1;
 
     if (sock->IsDataAvailable())
     {
@@ -738,7 +780,7 @@ int RemoteFile::Read(void *data, int size)
 
     while (controlSock->IsDataAvailable())
     {
-        LOG(VB_NETWORK, LOG_ERR,
+        LOG(VB_NETWORK, LOG_WARNING,
                 "RemoteFile::Read(): Control socket not empty to start!");
         controlSock->Reset();
     }
@@ -755,7 +797,7 @@ int RemoteFile::Read(void *data, int size)
 
     sent = size;
 
-    int waitms = 10;
+    int waitms = 30;
     MythTimer mtimer;
     mtimer.start();
 
@@ -776,12 +818,23 @@ int RemoteFile::Read(void *data, int size)
         {
             sent = strlist[0].toInt(); // -1 on backend error
             response = true;
+            if (ret < sent)
+            {
+                // We have received less than what the server sent, retry immediately
+                ret = sock->Read(((char *)data) + recv, sent - recv, waitms);
+                if (ret > 0)
+                    recv += ret;
+                else if (ret < 0)
+                    error = true;
+            }
         }
     }
 
     if (!error && !response)
     {
-        if (controlSock->ReadStringList(strlist, MythSocket::kShortTimeout) &&
+        // Wait up to 1.5s for the backend to send the size
+        // MythSocket::ReadString will drop the connection
+        if (controlSock->ReadStringList(strlist, 1500) &&
             !strlist.isEmpty())
         {
             sent = strlist[0].toInt(); // -1 on backend error
@@ -790,7 +843,21 @@ int RemoteFile::Read(void *data, int size)
         {
             LOG(VB_GENERAL, LOG_ERR,
                    "RemoteFile::Read(): No response from control socket.");
-            sent = -1;
+            // If no data was received from control socket, and we got what we asked for
+            // assume everything is okay
+            if (recv == size)
+            {
+                sent = recv;
+            }
+            else
+            {
+                sent = -1;
+            }
+            // The TCP socket is dropped if there's a timeout, so we reconnect
+            if (!Resume())
+            {
+                sent = -1;
+            }
         }
     }
 
@@ -802,11 +869,22 @@ int RemoteFile::Read(void *data, int size)
         return sent;
 
     if (error || sent != recv)
+    {
         recv = -1;
+    }
+    else
+    {
+        lastposition += recv;
+    }
 
     return recv;
 }
 
+/**
+ * GetFileSize: returns the remote file's size at the time it was first opened
+ * Will query the server in order to get the size. If file isn't being modified
+ * by the server, that value will be cached
+ */
 long long RemoteFile::GetFileSize(void) const
 {
     if (isLocal())
@@ -828,12 +906,83 @@ long long RemoteFile::GetFileSize(void) const
         }
         return -1;
     }
+
+    QMutexLocker locker(&lock);
     return filesize;
+}
+
+/**
+ * GetRealFileSize: returns the current remote file's size.
+ * Will query the server in order to get the size. If file isn't being modified
+ * by the server, that value will be cached.
+ * A QUERY_SIZE myth request will be made. If the server doesn't support this command
+ * the size will be queried using a QUERY_FILE_EXISTS request
+ * Avoid using GetRealFileSize from the GUI thread
+ */
+long long RemoteFile::GetRealFileSize(void)
+{
+    if (isLocal())
+    {
+        return GetFileSize();
+    }
+
+    QMutexLocker locker(&lock);
+
+    if (completed ||
+        (lastSizeCheck.isRunning() && lastSizeCheck.elapsed() < MAX_FILE_CHECK))
+    {
+        return filesize;
+    }
+
+    if (!CheckConnection())
+    {
+        // Can't establish a new connection, using system one
+        struct stat fileinfo;
+
+        if (Exists(path, &fileinfo))
+        {
+            filesize = fileinfo.st_size;
+        }
+        return filesize;
+    }
+
+    QStringList strlist(QString(query).arg(recordernum));
+    strlist << "REQUEST_SIZE";
+
+    bool ok = controlSock->SendReceiveStringList(strlist);
+
+    if (ok && !strlist.isEmpty())
+    {
+        bool validate;
+        long long size = strlist[0].toLongLong(&validate);
+
+        if (validate)
+        {
+            if (strlist.count() >= 2)
+            {
+                completed = strlist[1].toInt();
+            }
+            filesize = size;
+        }
+        else
+        {
+            struct stat fileinfo;
+
+            if (Exists(path, &fileinfo))
+            {
+                filesize = fileinfo.st_size;
+            }
+        }
+        lastSizeCheck.restart();
+        return filesize;
+    }
+
+    return -1;
 }
 
 bool RemoteFile::SaveAs(QByteArray &data)
 {
-    long long fs = GetFileSize();
+    long long fs = GetRealFileSize();
 
     if (fs < 0)
         return false;
@@ -855,15 +1004,13 @@ void RemoteFile::SetTimeout(bool fast)
         return;
 
     QMutexLocker locker(&lock);
-    if (!sock)
+
+    if (!CheckConnection())
     {
         LOG(VB_NETWORK, LOG_ERR,
-            "RemoteFile::SetTimeout(): Called with no socket");
+            "RemoteFile::SetTimeout(): Couldn't connect");
         return;
     }
-
-    if (!sock->IsConnected() || !controlSock->IsConnected())
-        return;
 
     QStringList strlist( QString(query).arg(recordernum) );
     strlist << "SET_TIMEOUT";
@@ -921,4 +1068,61 @@ bool RemoteFile::SetBlocking(bool block)
     }
     return true;
 }
+
+/** \fn RemoteFile::CheckConnection(void)
+ *  \brief Check current connection and re-establish it if lost
+ *  \return True if connection is working
+ *  \param bool indicating if we are to reposition to the last known location if reconnection is required
+ */
+bool RemoteFile::CheckConnection(bool repos)
+{
+    if (IsConnected())
+    {
+        return true;
+    }
+    if (!canresume)
+    {
+        return false;
+    }
+    return Resume(repos);
+}
+
+/** \fn RemoteFile::IsConnected(void)
+ *  \brief Check if both the control and data sockets are currently connected
+ *  \return True if both sockets are connected
+ *  \param none
+ */
+bool RemoteFile::IsConnected(void)
+{
+    return sock && controlSock &&
+           sock->IsConnected() && controlSock->IsConnected();
+}
+
+/** \fn RemoteFile::Resume(void)
+ *  \brief Attempts to resume from a disconnected step. Must have lock
+ *  \return True if reconnection succeeded
+ *  \param bool indicating if we are to reposition to the last known location
+ */
+bool RemoteFile::Resume(bool repos)
+{
+    Close(true);
+    if (!OpenInternal())
+        return false;
+
+    if (repos)
+    {
+        readposition = lastposition;
+        if (SeekInternal(lastposition, SEEK_SET) < 0)
+        {
+            Close(true);
+            LOG(VB_FILE, LOG_ERR,
+                QString("RemoteFile::Resume: Enable to re-seek into last known "
+                        "position (%1").arg(lastposition));
+            return false;
+        }
+    }
+    readposition = lastposition = 0;
+    return true;
+}
+
 /* vim: set expandtab tabstop=4 shiftwidth=4: */

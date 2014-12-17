@@ -471,24 +471,27 @@ class ImageLoadThread : public QRunnable
                                                      m_cacheMode, m_parent,
                                                      aborted);
 
-             ImageLoadEvent *le = new ImageLoadEvent(m_parent, frames,
-                                                     m_basefile,
-                                                     m_imageProperties.filename,
-                                                     aborted);
-             QCoreApplication::postEvent(const_cast<MythUIImage*>(m_parent), le);
-        }
-        else
-        {
-            MythImage *image = ImageLoader::LoadImage(m_painter,
-                                                      m_imageProperties,
-                                                      m_cacheMode, m_parent,
-                                                      aborted);
+             if (frames && frames->count() > 1)
+             {
+                ImageLoadEvent *le = new ImageLoadEvent(m_parent, frames,
+                                                        m_basefile,
+                                                        m_imageProperties.filename,
+                                                        aborted);
+                QCoreApplication::postEvent(const_cast<MythUIImage*>(m_parent), le);
 
-            ImageLoadEvent *le = new ImageLoadEvent(m_parent, image, m_basefile,
-                                                    m_imageProperties.filename,
-                                                    m_number, aborted);
-            QCoreApplication::postEvent(const_cast<MythUIImage*>(m_parent), le);
+                return;
+             }
         }
+
+        MythImage *image = ImageLoader::LoadImage(m_painter,
+                                                    m_imageProperties,
+                                                    m_cacheMode, m_parent,
+                                                    aborted);
+
+        ImageLoadEvent *le = new ImageLoadEvent(m_parent, image, m_basefile,
+                                                m_imageProperties.filename,
+                                                m_number, aborted);
+        QCoreApplication::postEvent(const_cast<MythUIImage*>(m_parent), le);
     }
 
 private:
@@ -651,6 +654,8 @@ void MythUIImage::Init(void)
     m_animatedImage = false;
 
     m_runningThreads = 0;
+
+    m_showingRandomImage = false;
 }
 
 /**
@@ -1011,7 +1016,7 @@ bool MythUIImage::Load(bool allowLoadInBackground, bool forceStat)
             SetMinArea(MythRect());
             LOG(VB_GUI | VB_FILE, LOG_DEBUG, LOC +
                 QString("Load(), spawning thread to load '%1'").arg(filename));
-                
+
             m_runningThreads++;
             ImageLoadThread *bImgThread;
             bImgThread = new ImageLoadThread(this, GetPainter(),
@@ -1100,7 +1105,7 @@ bool MythUIImage::Load(bool allowLoadInBackground, bool forceStat)
  */
 void MythUIImage::Pulse(void)
 {
-    QWriteLocker updateLocker(&d->m_UpdateLock);
+    d->m_UpdateLock.lockForWrite();
 
     int delay = -1;
 
@@ -1112,39 +1117,51 @@ void MythUIImage::Pulse(void)
     if (delay > 0 &&
         abs(m_LastDisplay.msecsTo(QTime::currentTime())) > delay)
     {
-        m_ImagesLock.lock();
-
-        if (m_animationCycle == kCycleStart)
+        if (m_showingRandomImage)
         {
-            ++m_CurPos;
-
-            if (m_CurPos >= (uint)m_Images.size())
-                m_CurPos = 0;
+            FindRandomImage();
+            d->m_UpdateLock.unlock();
+            Load();
+            d->m_UpdateLock.lockForWrite();
         }
-        else if (m_animationCycle == kCycleReverse)
+        else
         {
-            if ((m_CurPos + 1) >= (uint)m_Images.size())
-            {
-                m_animationReverse = true;
-            }
-            else if (m_CurPos == 0)
-            {
-                m_animationReverse = false;
-            }
+            m_ImagesLock.lock();
 
-            if (m_animationReverse)
-                --m_CurPos;
-            else
+            if (m_animationCycle == kCycleStart)
+            {
                 ++m_CurPos;
-        }
 
-        m_ImagesLock.unlock();
+                if (m_CurPos >= (uint)m_Images.size())
+                    m_CurPos = 0;
+            }
+            else if (m_animationCycle == kCycleReverse)
+            {
+                if ((m_CurPos + 1) >= (uint)m_Images.size())
+                {
+                    m_animationReverse = true;
+                }
+                else if (m_CurPos == 0)
+                {
+                    m_animationReverse = false;
+                }
+
+                if (m_animationReverse)
+                    --m_CurPos;
+                else
+                    ++m_CurPos;
+            }
+
+            m_ImagesLock.unlock();
+        }
 
         SetRedraw();
         m_LastDisplay = QTime::currentTime();
     }
 
     MythUIType::Pulse();
+
+    d->m_UpdateLock.unlock();
 }
 
 /**
@@ -1242,34 +1259,10 @@ bool MythUIImage::ParseElement(
 
         if (m_imageProperties.filename.endsWith('/'))
         {
-            QDir imageDir(m_imageProperties.filename);
+            m_showingRandomImage = true;
+            m_imageDirectory = m_imageProperties.filename;
 
-            if (!imageDir.exists())
-            {
-                QString themeDir = GetMythUI()->GetThemeDir() + '/';
-                imageDir = themeDir + m_imageProperties.filename;
-            }
-
-            QStringList imageTypes;
-
-            QList< QByteArray > exts = QImageReader::supportedImageFormats();
-            QList< QByteArray >::Iterator it = exts.begin();
-
-            for (; it != exts.end(); ++it)
-            {
-                imageTypes.append(QString("*.").append(*it));
-            }
-
-            imageDir.setNameFilters(imageTypes);
-
-            QStringList imageList = imageDir.entryList();
-            QString randFile;
-
-            if (imageList.size())
-                randFile = QString("%1%2").arg(m_imageProperties.filename)
-                           .arg(imageList.takeAt(random() % imageList.size()));
-
-            m_OrigFilename = m_imageProperties.filename = randFile;
+            FindRandomImage();
         }
     }
     else if (element.tagName() == "filepattern")
@@ -1428,6 +1421,9 @@ void MythUIImage::CopyFrom(MythUIType *base)
 
     m_animationCycle = im->m_animationCycle;
     m_animatedImage = im->m_animatedImage;
+
+    m_showingRandomImage = im->m_showingRandomImage;
+    m_imageDirectory = im->m_imageDirectory;
 
     MythUIType::CopyFrom(base);
 
@@ -1618,6 +1614,43 @@ void MythUIImage::customEvent(QEvent *event)
         // No Images were loaded, so trigger Reset to default
         Reset();
     }
+}
 
+void MythUIImage::FindRandomImage(void)
+{
+    QDir imageDir(m_imageDirectory);
 
+    if (!imageDir.exists())
+    {
+        QString themeDir = GetMythUI()->GetThemeDir() + '/';
+        imageDir = themeDir + m_imageDirectory;
+    }
+
+    QStringList imageTypes;
+
+    QList< QByteArray > exts = QImageReader::supportedImageFormats();
+    QList< QByteArray >::Iterator it = exts.begin();
+
+    for (; it != exts.end(); ++it)
+    {
+        imageTypes.append(QString("*.").append(*it));
+    }
+
+    imageDir.setNameFilters(imageTypes);
+
+    QStringList imageList = imageDir.entryList();
+    QString randFile;
+
+    if (imageList.size())
+    {
+        // try to find a different image
+        do
+        {
+            randFile = QString("%1%2").arg(m_imageDirectory)
+                                      .arg(imageList.takeAt(random() % imageList.size()));
+
+        } while (imageList.size() > 1 && randFile == m_OrigFilename);
+    }
+
+    m_OrigFilename = m_imageProperties.filename = randFile;
 }

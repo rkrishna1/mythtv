@@ -149,24 +149,16 @@ void ThemeChooser::Load(void)
     SetBusyPopupMessage(tr("Loading Installed Themes"));
 
     QString MythVersion = MYTH_SOURCE_PATH;
+
+    // Treat devel branches as master
+    if (!MythVersion.isEmpty() && !MythVersion.startsWith("fixes/"))
+        // FIXME: For now, treat git master the same as svn trunk
+        MythVersion = "trunk";
+
     QStringList themesSeen;
     QDir themes(m_userThemeDir);
     themes.setFilter(QDir::Dirs | QDir::NoDotAndDotDot);
     themes.setSorting(QDir::Name | QDir::IgnoreCase);
-
-    // Treat devel branches as master
-    if (MythVersion.startsWith("devel/"))
-        MythVersion = "master";
-
-    // FIXME: For now, treat git master the same as svn trunk
-    if (MythVersion == "master")
-        MythVersion = "trunk";
-
-    if (MythVersion != "trunk")
-    {
-        MythVersion = MYTH_BINARY_VERSION; // Example: 0.25.20101017-1
-        MythVersion.replace(QRegExp("\\.[0-9]{8,}.*"), "");
-    }
 
     m_infoList = themes.entryInfoList();
 
@@ -196,13 +188,50 @@ void ThemeChooser::Load(void)
         }
     }
 
+    if (MythVersion == "trunk")
+    {
+        LoadVersion(MythVersion, themesSeen, true);
+        LOG(VB_GUI, LOG_INFO, QString("Loading themes for %1").arg(MythVersion));
+    }
+    else
+    {
+
+        MythVersion = MYTH_BINARY_VERSION; // Example: 0.25.20101017-1
+        MythVersion.replace(QRegExp("\\.[0-9]{8,}.*"), "");
+        LOG(VB_GUI, LOG_INFO, QString("Loading themes for %1").arg(MythVersion));
+        LoadVersion(MythVersion, themesSeen, true);
+
+        // If a version of the theme for this tag exists, use it...
+        QRegExp subexp("v[0-9]+.[0-9]+.([0-9]+)-*");
+        int pos = subexp.indexIn(MYTH_SOURCE_VERSION);
+        if (pos > -1)
+        {
+            QString subversion;
+            int idx = subexp.cap(1).toInt();
+            for ( ; idx > 0; --idx)
+            {
+                subversion = MythVersion + "." + QString::number(idx);
+                LOG(VB_GUI, LOG_INFO, QString("Loading themes for %1").arg(subversion));
+                LoadVersion(subversion, themesSeen, false);
+            }
+        }
+    }
+
+    ResetBusyPopup();
+
+    qSort(m_infoList.begin(), m_infoList.end(), sortThemeNames);
+}
+
+void ThemeChooser::LoadVersion(const QString &version,
+                               QStringList &themesSeen, bool alert_user)
+{
     QString remoteThemesFile = GetConfDir();
     remoteThemesFile.append("/tmp/themes.zip");
     QString themeSite = QString("%1/%2")
         .arg(gCoreContext->GetSetting("ThemeRepositoryURL",
-             "http://themes.mythtv.org/themes/repository")).arg(MythVersion);
+             "http://themes.mythtv.org/themes/repository")).arg(version);
     QDir remoteThemesDir(GetMythUI()->GetThemeCacheDir()
-                             .append("/themechooser/").append(MythVersion));
+                             .append("/themechooser/").append(version));
 
     int downloadFailures =
         gCoreContext->GetNumSetting("ThemeInfoDownloadFailures", 0);
@@ -231,17 +260,31 @@ void ThemeChooser::Load(void)
 
     if (m_refreshDownloadableThemes)
     {
+        QFile test(remoteThemesFile);
+        if (test.open(QIODevice::WriteOnly))
+            test.remove();
+        else
+        {
+            ShowOkPopup(tr("Unable to create '%1'").arg(remoteThemesFile));
+            return;
+        }
+
         SetBusyPopupMessage(tr("Refreshing Downloadable Themes Information"));
 
         QString url = themeSite;
         url.append("/themes.zip");
         QString destdir = GetMythUI()->GetThemeCacheDir();
         destdir.append("/themechooser");
-        QString versiondir = QString("%1/%2").arg(destdir).arg(MythVersion);
-        removeThemeDir(versiondir);
+        QString versiondir = QString("%1/%2").arg(destdir).arg(version);
+        if (!removeThemeDir(versiondir))
+            ShowOkPopup(tr("Unable to remove '%1'").arg(versiondir));
         QDir dir;
-        dir.mkpath(destdir);
+        if (!dir.mkpath(destdir))
+            ShowOkPopup(tr("Unable to create '%1'").arg(destdir));
         bool result = GetMythDownloadManager()->download(url, remoteThemesFile);
+
+        LOG(VB_GUI, LOG_INFO, LOC +
+            QString("Downloading '%1' to '%2'").arg(url).arg(remoteThemesFile));
 
         SetBusyPopupMessage(tr("Extracting Downloadable Themes Information"));
 
@@ -252,8 +295,34 @@ void ThemeChooser::Load(void)
             downloadFailures++;
             gCoreContext->SaveSetting("ThemeInfoDownloadFailures",
                                       downloadFailures);
+
+            if (!result)
+            {
+                LOG(VB_GUI, LOG_ERR, LOC +
+                    QString("Failed to download '%1'").arg(url));
+                if (alert_user)
+                    ShowOkPopup(tr("Failed to download '%1'").arg(url));
+            }
+            else
+            {
+                LOG(VB_GUI, LOG_ERR, LOC +
+                    QString("Failed to unzip '%1' to '%2'")
+                    .arg(remoteThemesFile).arg(destdir));
+                if (alert_user)
+                    ShowOkPopup(tr("Failed to unzip '%1' to '%2'")
+                                   .arg(remoteThemesFile).arg(destdir));
+            }
         }
+        else
+            LOG(VB_GUI, LOG_INFO, LOC +
+                QString("Unzipped '%1' to '%2'")
+                .arg(remoteThemesFile)
+                .arg(destdir));
     }
+
+    QDir themes;
+    themes.setFilter(QDir::Dirs | QDir::NoDotAndDotDot);
+    themes.setSorting(QDir::Name | QDir::IgnoreCase);
 
     if ((QFile::exists(remoteThemesFile)) &&
         (remoteThemesDir.exists()))
@@ -279,9 +348,10 @@ void ThemeChooser::Load(void)
             QString localDir = themes.absolutePath();
             localDir.append("/").append(dirName);
 
+            ThemeInfo remoteTheme((*it).absoluteFilePath());
+
             if (themesSeen.contains(dirName))
             {
-                ThemeInfo remoteTheme((*it).absoluteFilePath());
                 ThemeInfo *localTheme = m_themeNameInfos[dirName];
 
                 themeName = remoteTheme.GetName();
@@ -297,6 +367,11 @@ void ThemeChooser::Load(void)
                 {
                     if (loadThemeInfo(*it))
                     {
+                        LOG(VB_GUI, LOG_DEBUG, LOC +
+                            QString("'%1' old version %2.%3, new version %4.%5")
+                            .arg(themeName).arg(locMaj).arg(locMin)
+                            .arg(rmtMaj).arg(rmtMin));
+
                         m_infoList << *it;
                         m_themeStatuses[themeName] = "updateavailable";
 
@@ -310,11 +385,21 @@ void ThemeChooser::Load(void)
                 else if ((rmtMaj == locMaj) &&
                          (rmtMin == locMin))
                 {
+                    LOG(VB_GUI, LOG_DEBUG, LOC +
+                        QString("'%1' up to date (%2.%3)")
+                        .arg(themeName).arg(locMaj).arg(locMin));
+
                     m_themeStatuses[themeName] = "uptodate";
                 }
             }
             else
             {
+                LOG(VB_GUI, LOG_DEBUG, LOC +
+                    QString("'%1' (%2.%3) available")
+                    .arg(themeName)
+                    .arg(remoteTheme.GetMajorVersion())
+                    .arg(remoteTheme.GetMinorVersion()));
+
                 ThemeInfo *remoteTheme = loadThemeInfo(*it);
                 if (remoteTheme)
                 {
@@ -333,9 +418,6 @@ void ThemeChooser::Load(void)
         }
     }
 
-    ResetBusyPopup();
-
-    qSort(m_infoList.begin(), m_infoList.end(), sortThemeNames);
 }
 
 void ThemeChooser::Init(void)
@@ -875,17 +957,17 @@ void ThemeChooser::removeTheme(void)
     ReloadInBackground();
 }
 
-void ThemeChooser::removeThemeDir(const QString &dirname)
+bool ThemeChooser::removeThemeDir(const QString &dirname)
 {
     if ((!dirname.startsWith(m_userThemeDir)) &&
         (!dirname.startsWith(GetMythUI()->GetThemeCacheDir())))
-        return;
+        return true;
 
     QDir dir(dirname);
 
     if (!dir.exists())
-        return;
-    
+        return true;
+
     dir.setFilter(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
     QFileInfoList list = dir.entryInfoList();
     QFileInfoList::const_iterator it = list.begin();
@@ -896,45 +978,54 @@ void ThemeChooser::removeThemeDir(const QString &dirname)
         fi = &(*it++);
         if (fi->isFile() && !fi->isSymLink())
         {
-            QFile::remove(fi->absoluteFilePath());
+            if (!QFile::remove(fi->absoluteFilePath()))
+                return false;
         }
         else if (fi->isDir() && !fi->isSymLink())
         {
-            removeThemeDir(fi->absoluteFilePath());
+            if (!removeThemeDir(fi->absoluteFilePath()))
+                return false;
         }
     }
 
-    dir.rmdir(dirname);
+    return dir.rmdir(dirname);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-ThemeUpdateChecker::ThemeUpdateChecker() :
+ThemeUpdateChecker::ThemeUpdateChecker(void) :
     m_updateTimer(new QTimer(this))
 {
-    m_mythVersion = MYTH_SOURCE_PATH;
+    QString version = MYTH_SOURCE_PATH;
 
-    // Treat devel branches as master
-    if (m_mythVersion.startsWith("devel/"))
-        m_mythVersion = "master";
-
-    // FIXME: For now, treat git master the same as svn trunk
-    if (m_mythVersion == "master")
-        m_mythVersion = "trunk";
-
-    if (m_mythVersion != "trunk")
+    if (!version.isEmpty() && !version.startsWith("fixes/"))
+        // Treat devel branches as master
+        m_mythVersions << "trunk";
+    else
     {
-        m_mythVersion = MYTH_BINARY_VERSION; // Example: 0.25.20101017-1
-        m_mythVersion.replace(QRegExp("\\.[0-9]{8,}.*"), "");
+        version = MYTH_BINARY_VERSION; // Example: 0.25.20101017-1
+        version.replace(QRegExp("\\.[0-9]{8,}.*"), "");
+
+        // If a version of the theme for this tag exists, use it...
+        QRegExp subexp("v[0-9]+.[0-9]+.([0-9]+)-*");
+        int pos = subexp.indexIn(MYTH_SOURCE_VERSION);
+        if (pos > -1)
+        {
+            QString subversion;
+            int idx = subexp.cap(1).toInt();
+            for ( ; idx > 0; --idx)
+                m_mythVersions << version + "." + QString::number(idx);
+        }
+        m_mythVersions << version;
     }
 
-    m_infoPackage = gCoreContext->GenMythURL(gCoreContext->GetSetting("MasterServerIP"),
-                                             0,
+    m_infoPackage = gCoreContext->GenMythURL(gCoreContext->GetMasterHostName(),
+                                             gCoreContext->GetMasterServerPort(),
                                              "remotethemes/themes.zip",
                                              "Temp");
 
     gCoreContext->SaveSetting("ThemeUpdateStatus", "");
-                                 
+
     connect(m_updateTimer, SIGNAL(timeout()), SLOT(checkForUpdate()));
     m_updateTimer->start(60 * 60 * 1000); // Run once an hour
 
@@ -957,81 +1048,104 @@ void ThemeUpdateChecker::checkForUpdate(void)
     if (GetMythUI()->GetCurrentLocation(false, true) != "mainmenu")
         return;
 
+    ThemeInfo *localTheme = NULL;
+    int locMaj = 0;
+    int locMin = 0;
+
     if (RemoteFile::Exists(m_infoPackage))
     {
-        QString remoteThemeDir =
-            gCoreContext->GenMythURL(gCoreContext->GetSetting("MasterServerIP"),
-                                     0,
-                                     QString("remotethemes/%1/%2")
-                                             .arg(m_mythVersion)
-                                             .arg(GetMythUI()->GetThemeName()),
-                                     "Temp");
+        QStringList::iterator Iversion;
 
-        QString infoXML = remoteThemeDir;
-        infoXML.append("/themeinfo.xml");
-
-        if (RemoteFile::Exists(infoXML))
+        for (Iversion = m_mythVersions.begin();
+             Iversion != m_mythVersions.end(); ++Iversion)
         {
-            ThemeInfo *remoteTheme = new ThemeInfo(remoteThemeDir);
-            if (!remoteTheme)
+
+            QString remoteThemeDir =
+                gCoreContext->GenMythURL(gCoreContext->GetMasterHostName(),
+                                         gCoreContext->GetMasterServerPort(),
+                                         QString("remotethemes/%1/%2")
+                                         .arg(*Iversion)
+                                         .arg(GetMythUI()->GetThemeName()),
+                                         "Temp");
+
+            QString infoXML = remoteThemeDir;
+            infoXML.append("/themeinfo.xml");
+
+            LOG(VB_GUI, LOG_INFO, QString("ThemeUpdateChecker Loading '%1'")
+                .arg(infoXML));
+
+            if (RemoteFile::Exists(infoXML))
             {
-                LOG(VB_GENERAL, LOG_ERR,
-                    QString("ThemeUpdateChecker::checkForUpdate(): "
-                            "Unable to create ThemeInfo for %1")
-                        .arg(infoXML));
-                return;
-            }
-                
-            ThemeInfo *localTheme = new ThemeInfo(GetMythUI()->GetThemeDir());
-            if (!localTheme)
-            {
-                LOG(VB_GENERAL, LOG_ERR,
-                    "ThemeUpdateChecker::checkForUpdate(): " 
-                    "Unable to create ThemeInfo for current theme");
-                return;
-            }
-
-            int rmtMaj = remoteTheme->GetMajorVersion();
-            int rmtMin = remoteTheme->GetMinorVersion();
-            int locMaj = localTheme->GetMajorVersion();
-            int locMin = localTheme->GetMinorVersion();
-
-            if ((rmtMaj > locMaj) ||
-                ((rmtMaj == locMaj) &&
-                 (rmtMin > locMin)))
-            {
-                m_lastKnownThemeVersion =
-                    QString("%1-%2.%3").arg(GetMythUI()->GetThemeName())
-                                       .arg(rmtMaj).arg(rmtMin);
-
-                QString status = gCoreContext->GetSetting("ThemeUpdateStatus");
-                QString currentLocation = GetMythUI()->GetCurrentLocation(false, true);
-
-                if ((!status.startsWith(m_lastKnownThemeVersion)) &&
-                    (currentLocation == "mainmenu"))
+                ThemeInfo *remoteTheme = new ThemeInfo(remoteThemeDir);
+                if (!remoteTheme)
                 {
-                    m_currentVersion = QString("%1.%2").arg(locMaj).arg(locMin);
-                    m_newVersion = QString("%1.%2").arg(rmtMaj).arg(rmtMin);
+                    LOG(VB_GENERAL, LOG_ERR,
+                        QString("ThemeUpdateChecker::checkForUpdate(): "
+                                "Unable to create ThemeInfo for %1")
+                        .arg(infoXML));
+                    return;
+                }
 
-                    gCoreContext->SaveSetting("ThemeUpdateStatus",
-                                         m_lastKnownThemeVersion + " notified");
+                if (!localTheme)
+                {
+                    localTheme = new ThemeInfo(GetMythUI()->GetThemeDir());
+                    if (!localTheme)
+                    {
+                        LOG(VB_GENERAL, LOG_ERR,
+                            "ThemeUpdateChecker::checkForUpdate(): "
+                            "Unable to create ThemeInfo for current theme");
+                        return;
+                    }
+                    locMaj = localTheme->GetMajorVersion();
+                    locMin = localTheme->GetMinorVersion();
+                }
 
-                    QString message = tr("Version %1 of the %2 theme is now "
-                                         "available in the Theme Chooser.  The "
-                                         "currently installed version is %3.")
-                                         .arg(m_newVersion)
-                                         .arg(GetMythUI()->GetThemeName())
-                                         .arg(m_currentVersion);
+                int rmtMaj = remoteTheme->GetMajorVersion();
+                int rmtMin = remoteTheme->GetMinorVersion();
 
-                    ShowOkPopup(message);
+                delete remoteTheme;
+
+                if ((rmtMaj > locMaj) ||
+                    ((rmtMaj == locMaj) &&
+                     (rmtMin > locMin)))
+                {
+                    m_lastKnownThemeVersion =
+                        QString("%1-%2.%3").arg(GetMythUI()->GetThemeName())
+                        .arg(rmtMaj).arg(rmtMin);
+
+                    QString status = gCoreContext->GetSetting
+                      ("ThemeUpdateStatus");
+                    QString currentLocation = GetMythUI()->GetCurrentLocation
+                      (false, true);
+
+                    if ((!status.startsWith(m_lastKnownThemeVersion)) &&
+                        (currentLocation == "mainmenu"))
+                    {
+                        m_currentVersion = QString("%1.%2")
+                          .arg(locMaj).arg(locMin);
+                        m_newVersion = QString("%1.%2").arg(rmtMaj).arg(rmtMin);
+
+                        gCoreContext->SaveSetting("ThemeUpdateStatus",
+                                                  m_lastKnownThemeVersion
+                                                  + " notified");
+
+                        QString message = tr("Version %1 of the %2 theme is now "
+                                             "available in the Theme Chooser. "
+                                             "The currently installed version "
+                                             "is %3.")
+                          .arg(m_newVersion)
+                          .arg(GetMythUI()->GetThemeName())
+                          .arg(m_currentVersion);
+
+                        ShowOkPopup(message);
+                        break;
+                    }
                 }
             }
-                
-            delete remoteTheme;
-            delete localTheme;
         }
     }
+
+    delete localTheme;
 }
 
 /* vim: set expandtab tabstop=4 shiftwidth=4: */
-

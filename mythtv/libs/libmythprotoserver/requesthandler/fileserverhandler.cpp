@@ -665,7 +665,8 @@ bool FileServerHandler::HandleQueryFileHash(SocketHandler *socket,
 
     QString hash = "";
 
-    if (hostname == gCoreContext->GetHostName())
+    if (hostname == gCoreContext->GetHostName() ||
+        gCoreContext->IsThisHost(hostname))
     {
         // looking for file on me, return directly
         StorageGroup sgroup(storageGroup, gCoreContext->GetHostName());
@@ -828,8 +829,7 @@ bool FileServerHandler::HandleGetFileList(SocketHandler *socket,
                 "path = %3 wanthost = %4")
             .arg(groupname).arg(host).arg(path).arg(wantHost));
 
-    if ((host.toLower() == wantHost.toLower()) ||
-        gCoreContext->IsThisHost(wantHost))
+    if (gCoreContext->IsThisHost(wantHost))
     {
         StorageGroup sg(groupname, host);
         LOG(VB_FILE, LOG_INFO, "Getting local info");
@@ -895,8 +895,7 @@ bool FileServerHandler::HandleFileQuery(SocketHandler *socket,
     LOG(VB_FILE, LOG_DEBUG, QString("HandleSGFileQuery: myth://%1@%2/%3")
                              .arg(groupname).arg(wantHost).arg(filename));
 
-    if ((wantHost.toLower() == gCoreContext->GetHostName().toLower()) ||
-        gCoreContext->IsThisHost(wantHost))
+    if (gCoreContext->IsThisHost(wantHost))
     {
         // handle request locally
         LOG(VB_FILE, LOG_DEBUG, QString("Getting local info"));
@@ -1037,6 +1036,12 @@ bool FileServerHandler::HandleQueryFileTransfer(SocketHandler *socket,
             ft->SetTimeout(fast);
             res << "OK";
         }
+    }
+    else if (slist[1] == "REQUEST_SIZE")
+    {
+        // return size and if the file is not opened for writing
+        res << QString::number(ft->GetFileSize());
+        res << QString::number(!gCoreContext->IsRegisteredFileForWrite(ft->GetFileName()));
     }
     else
     {

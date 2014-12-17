@@ -327,6 +327,7 @@ static void avi_read_nikon(AVFormatContext *s, uint64_t end)
                 uint16_t size = avio_rl16(s->pb);
                 const char *name = NULL;
                 char buffer[64] = {0};
+                size = FFMIN(size, tag_end - avio_tell(s->pb));
                 size -= avio_read(s->pb, buffer,
                                    FFMIN(size, sizeof(buffer)-1));
                 switch (tag) {
@@ -639,6 +640,8 @@ static int avi_read_header(AVFormatContext *s)
                     st->codec->codec_tag = tag1;
                     st->codec->codec_id = ff_codec_get_id(ff_codec_bmp_tags, tag1);
                     st->need_parsing = AVSTREAM_PARSE_HEADERS; // This is needed to get the pict type which is necessary for generating correct pts.
+                    if (st->codec->codec_tag == MKTAG('V', 'S', 'S', 'H'))
+                        st->need_parsing = AVSTREAM_PARSE_FULL;
 
                     if(st->codec->codec_tag==0 && st->codec->height > 0 && st->codec->extradata_size < 1U<<30){
                         st->codec->extradata_size+= 9;
@@ -999,10 +1002,12 @@ start_sync:
                 }
             }
 
-
-            if(   (st->discard >= AVDISCARD_DEFAULT && size==0)
-               /*|| (st->discard >= AVDISCARD_NONKEY && !(pkt->flags & AV_PKT_FLAG_KEY))*/ //FIXME needs a little reordering
-               || st->discard >= AVDISCARD_ALL){
+            if (!avi->dv_demux &&
+                ((st->discard >= AVDISCARD_DEFAULT && size == 0) /* ||
+                 // FIXME: needs a little reordering
+                 (st->discard >= AVDISCARD_NONKEY &&
+                 !(pkt->flags & AV_PKT_FLAG_KEY)) */
+                || st->discard >= AVDISCARD_ALL)) {
                 if (!exit_early) {
                     ast->frame_offset += get_duration(ast, size);
                     avio_skip(pb, size);
@@ -1193,7 +1198,7 @@ resync:
                 int index;
                 av_assert0(st->index_entries);
 
-                index= av_index_search_timestamp(st, ast->frame_offset, 0);
+                index= av_index_search_timestamp(st, ast->frame_offset, AVSEEK_FLAG_ANY);
                 e= &st->index_entries[index];
 
                 if(index >= 0 && e->timestamp == ast->frame_offset){
@@ -1303,7 +1308,7 @@ static int avi_read_idx1(AVFormatContext *s, int size)
         st = s->streams[index];
         ast = st->priv_data;
 
-        if(first_packet && first_packet_pos && len) {
+        if (first_packet && first_packet_pos) {
             data_offset = first_packet_pos - pos;
             first_packet = 0;
         }
@@ -1524,7 +1529,7 @@ static int avi_read_seek(AVFormatContext *s, int stream_index, int64_t timestamp
             continue;
 
 //        av_assert1(st2->codec->block_align);
-        av_assert0((int64_t)st2->time_base.num*ast2->rate == (int64_t)st2->time_base.den*ast2->scale);
+        av_assert0(fabs(av_q2d(st2->time_base) - ast2->scale / (double)ast2->rate) < av_q2d(st2->time_base) * 0.00000001);
         index = av_index_search_timestamp(
                 st2,
                 av_rescale_q(timestamp, st->time_base, st2->time_base) * FFMAX(ast2->sample_size, 1),

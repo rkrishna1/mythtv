@@ -3465,7 +3465,7 @@ else
 fi
 
 add_cflags $extra_cflags
-#add_cxxflags $extra_cxxflags
+add_cxxflags $extra_cxxflags
 add_asflags $extra_cflags
 
 if test -n "$sysroot"; then
@@ -4784,6 +4784,7 @@ check_exec -lm << EOF && enable cpu_clips_negative
     }
 EOF
 
+enabled x86 && enabled sse2
 # test for distcc
 enabled distcc && check_cmd distcc --version || disable distcc
 if enabled distcc; then
@@ -6475,6 +6476,21 @@ BLOCKQUOTE
 if enabled mythlogserver; then
     # configure zeromq
     echo "Configuring zeromq..."
+    if [ ! `which libtool` ]
+    then
+        echo libtool not found. please install it.
+        exit 1
+    fi
+    if [ ! `which autoreconf` ]
+    then
+        echo autoreconf not found. please install it.
+        exit 1
+    fi
+    (cd external/zeromq ; ./autogen.sh 2> /dev/null > /dev/null)
+    if [ $? -ne 0 ]; then
+	echo external/zeromq/autogen.sh failed.
+	exit 1
+    fi
     (cd external/zeromq ; \
              ./configure --quiet --without-documentation --prefix=${prefix} \
                          --includedir=${prefix}/include/mythtv/zeromq)

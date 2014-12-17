@@ -367,7 +367,7 @@ void SSDP::ProcessData( MSocketDevice *pSocket )
 
         QHostAddress  peerAddress = pSocket->peerAddress();
         quint16       peerPort    = pSocket->peerPort   ();
-
+        
         // ------------------------------------------------------------------
         QString     str          = QString(buffer.constData());
         QStringList lines        = str.split("\r\n", QString::SkipEmptyParts);

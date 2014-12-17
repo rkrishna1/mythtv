@@ -196,7 +196,7 @@ void MythUIText::SetTextFromMap(const InfoMap &map)
     if (newText.isEmpty())
         newText = GetDefaultText();
 
-    QRegExp regexp("%(([^\\|%]+)?\\||\\|(.))?(\\w+)(\\|(.+))?%");
+    QRegExp regexp("%(([^\\|%]+)?\\||\\|(.))?(\\S+)(\\|(.+))?%");
     regexp.setMinimal(true);
 
     if (!newText.isEmpty() && newText.contains(regexp))
@@ -899,7 +899,7 @@ void MythUIText::FillCutMessage(void)
         }
     }
 
-    // If any of hcenter|vcenter|Justify, center it all, then adjust later
+    // If any of hcenter|vcenter|Justify, center it all, then adjust
     if (m_Justification & (Qt::AlignCenter|Qt::AlignJustify))
     {
         m_drawRect.moveCenter(m_Area.center());
