@@ -74,9 +74,10 @@ using namespace std;
 #include "filesysteminfo.h"
 #include "metaio.h"
 #include "musicmetadata.h"
-#include "imagescan.h"
-#include "imagethumbgenthread.h"
-#include "imageutils.h"
+#include "imagescanner.h"
+#include "imagethumbs.h"
+#include "imagehandlers.h"
+#include "cardutil.h"
 
 // mythbackend headers
 #include "backendcontext.h"
@@ -675,21 +676,12 @@ void MainServer::ProcessRequestWork(MythSocket *sock)
     {
         HandleSGFileQuery(listline, pbs);
     }
-    else if (command == "GET_FREE_RECORDER")
+    else if (command == "GET_FREE_INPUT_INFO")
     {
-        HandleGetFreeRecorder(pbs);
-    }
-    else if (command == "GET_FREE_RECORDER_COUNT")
-    {
-        HandleGetFreeRecorderCount(pbs);
-    }
-    else if (command == "GET_FREE_RECORDER_LIST")
-    {
-        HandleGetFreeRecorderList(pbs);
-    }
-    else if (command == "GET_NEXT_FREE_RECORDER")
-    {
-        HandleGetNextFreeRecorder(listline, pbs);
+        if (tokens.size() != 2)
+            SendErrorResponse(pbs, "Bad GET_FREE_INPUT_INFO");
+        else
+            HandleGetFreeInputInfo(pbs, tokens[1].toUInt());
     }
     else if (command == "QUERY_RECORDER")
     {
@@ -895,95 +887,109 @@ void MainServer::ProcessRequestWork(MythSocket *sock)
         else
             HandleMusicTagChangeImage(listline, pbs);
     }
-    else if (command == "IMAGE_SCAN")
-    {
-        QString err = QString("Bad IMAGE_SCAN");
-
-        if (listline.size() == 2)
-
-            err = HandleScanImages(listline, pbs);
-
-        if (err.isEmpty())
-        {
-            QStringList ok = QStringList("OK");
-            SendResponse(pbs->getSocket(), ok);
-        }
-        else
-            SendErrorResponse(pbs, err);
-    }
-    else if (command == "IMAGE_GET_SCAN_STATUS")
-    {
-        if (listline.size() != 1)
-            SendErrorResponse(pbs, "Bad IMAGE_GET_SCAN_STATUS");
-        else
-            HandleQueryImageScanStatus(pbs);
-    }
-    else if (command == "IMAGE_THUMBNAILS")
+    else if (command == "MUSIC_LYRICS_FIND")
     {
         if (listline.size() < 3)
-            SendErrorResponse(pbs, "Bad IMAGE_THUMBNAILS");
+            SendErrorResponse(pbs, "Bad MUSIC_LYRICS_FIND");
         else
-            HandleCreateThumbnails(listline, pbs);
+            HandleMusicFindLyrics(listline, pbs);
+    }
+    else if (command == "MUSIC_LYRICS_GETGRABBERS")
+    {
+        HandleMusicGetLyricGrabbers(listline, pbs);
+    }
+    else if (command == "MUSIC_LYRICS_SAVE")
+    {
+        if (listline.size() < 3)
+            SendErrorResponse(pbs, "Bad MUSIC_LYRICS_SAVE");
+        else
+            HandleMusicSaveLyrics(listline, pbs);
+    }
+    else if (command == "IMAGE_SCAN")
+    {
+        QStringList reply = ImageScan::getInstance()->HandleScanRequest(listline);
+        SendResponse(pbs->getSocket(), reply);
+    }
+    else if (command == "IMAGE_MOVE")
+    {
+        // Expects destination dir id, comma-delimited dir/file ids
+        QStringList reply = (listline.size() == 3)
+                         ? ImageHandler::HandleMove(listline[1], listline[2])
+                         : QStringList("ERROR") << "Bad IMAGE_MOVE";
+
+        SendResponse(pbs->getSocket(), reply);
     }
     else if (command == "IMAGE_DELETE")
     {
-        QString err = QString("Bad IMAGE_DELETE");
+        // Expects comma-delimited dir/file ids
+        QStringList reply = (listline.size() == 2)
+                ? ImageHandler::HandleDelete(listline[1])
+                : QStringList("ERROR") << "Bad IMAGE_DELETE";
 
-        if (listline.size() == 2)
+        SendResponse(pbs->getSocket(), reply);
+    }
+    else if (command == "IMAGE_HIDE")
+    {
+        // Expects hide flag, comma-delimited file/dir ids
+        QStringList reply = (listline.size() == 3)
+                ? ImageHandler::HandleHide(listline[1].toInt(), listline[2])
+                : QStringList("ERROR") << "Bad IMAGE_HIDE";
 
-            err = HandleDeleteImage(listline, pbs);
+        SendResponse(pbs->getSocket(), reply);
+    }
+    else if (command == "IMAGE_TRANSFORM")
+    {
+        // Expects transformation, write file flag,
+        QStringList reply = (listline.size() == 3)
+                ? ImageHandler::HandleTransform(listline[1].toInt(), listline[2])
+                : QStringList("ERROR") << "Bad IMAGE_TRANSFORM";
 
-        if (err.isEmpty())
-        {
-            QStringList ok = QStringList("OK");
-            SendResponse(pbs->getSocket(), ok);
-        }
-        else
-            SendErrorResponse(pbs, err);
+        SendResponse(pbs->getSocket(), reply);
     }
     else if (command == "IMAGE_RENAME")
     {
-        QString err = QString("Bad IMAGE_RENAME");
+        // Expects file/dir id, new basename
+        QStringList reply = (listline.size() == 3)
+                ? ImageHandler::HandleRename(listline[1], listline[2])
+                : QStringList("ERROR") << "Bad IMAGE_RENAME";
 
-        if (listline.size() == 3)
-
-            err = HandleRenameImage(listline, pbs);
-
-        if (err.isEmpty())
-        {
-            QStringList ok = QStringList("OK");
-            SendResponse(pbs->getSocket(), ok);
-        }
-        else
-            SendErrorResponse(pbs, err);
+        SendResponse(pbs->getSocket(), reply);
     }
-    else if (command == "IMAGE_SET_EXIF")
+    else if (command == "IMAGE_CREATE_DIRS")
     {
-        QString err = QString("Bad IMAGE_SET_EXIF");
+        // Expects list of dir names
+        QStringList reply = (listline.size() == 2)
+                ? ImageHandler::HandleDirs(listline[1].split(","))
+                : QStringList("ERROR") << "Bad IMAGE_CREATE_DIRS";
 
-        if (listline.size() == 4)
-
-            err = HandleSetImageExif(listline, pbs);
-
-        if (err.isEmpty())
-        {
-            QStringList ok = QStringList("OK");
-            SendResponse(pbs->getSocket(), ok);
-        }
-        else
-            SendErrorResponse(pbs, err);
+        SendResponse(pbs->getSocket(), reply);
     }
-    else if (command == "IMAGE_GET_EXIF")
+    else if (command == "IMAGE_COVER")
     {
-        QString err = QString("Bad IMAGE_GET_EXIF");
+        // Expects dir id, cover id. Cover id of 0 resets dir to use its own
+        QStringList reply = (listline.size() == 3)
+                ? ImageHandler::HandleCover(listline[1].toInt(), listline[2].toInt())
+                : QStringList("ERROR") << "Bad IMAGE_COVER";
 
-        if (listline.size() == 2)
+        SendResponse(pbs->getSocket(), reply);
+    }
+    else if (command == "IMAGE_GET_METADATA")
+    {
+        // Expects "IMAGE_GET_METADATA", image id
+        QStringList reply = (listline.size() == 2)
+                ? ImageHandler::HandleGetMetadata(listline[1])
+                : QStringList("ERROR") << "Bad IMAGE_GET_METADATA";
 
-            err = HandleGetImageExif(listline, pbs);
+        SendResponse(pbs->getSocket(), reply);
+    }
+    else if (command == "IMAGE_IGNORE")
+    {
+        // Expects list of exclusion patterns
+        QStringList reply = (listline.size() == 2)
+                ? ImageHandler::HandleIgnore(listline[1])
+                : QStringList("ERROR") << "Bad IMAGE_IGNORE";
 
-        if (!err.isEmpty())
-
-            SendErrorResponse(pbs, err);
+        SendResponse(pbs->getSocket(), reply);
     }
     else if (command == "ALLOW_SHUTDOWN")
     {
@@ -1379,6 +1385,9 @@ void MainServer::customEvent(QEvent *e)
         if (me->Message().startsWith("LOCAL_"))
             return;
 
+        if (me->Message() == "CREATE_THUMBNAILS")
+            ImageThumb::getInstance()->HandleCreateThumbnails(me->ExtraDataList());
+
         MythEvent mod_me("");
         if (me->Message().startsWith("MASTER_UPDATE_REC_INFO"))
         {
@@ -1566,8 +1575,9 @@ void MainServer::HandleVersion(MythSocket *socket, const QStringList &slist)
     if (token != MYTH_PROTO_TOKEN)
     {
         LOG(VB_GENERAL, LOG_CRIT, LOC +
-            "MainServer::HandleVersion - Client sent incorrect protocol"
-            " token for protocol version. Refusing connection!");
+            QString("MainServer::HandleVersion - Client sent incorrect "
+                    "protocol token \"%1\" for protocol version. Refusing "
+                    "connection!").arg(token));
         retlist << "REJECT" << MYTH_PROTO_VERSION;
         socket->WriteStringList(retlist);
         HandleDone(socket);
@@ -3999,7 +4009,7 @@ void MainServer::HandleLockTuner(PlaybackSock *pbs, int cardid)
         EncoderLink *elink = *iter;
 
         // we're looking for a specific card but this isn't the one we want
-        if ((cardid != -1) && (cardid != elink->GetCardID()))
+        if ((cardid != -1) && (cardid != elink->GetInputID()))
             continue;
 
         if (elink->IsLocal())
@@ -4097,224 +4107,115 @@ void MainServer::HandleFreeTuner(int cardid, PlaybackSock *pbs)
     SendResponse(pbssock, strlist);
 }
 
-void MainServer::HandleGetFreeRecorder(PlaybackSock *pbs)
-{
-    MythSocket *pbssock = pbs->getSocket();
-    QString pbshost = pbs->getHostname();
-
-    vector<uint> excluded_cardids;
-    QStringList strlist;
-    int retval = -1;
-
-    EncoderLink *encoder = NULL;
-    QString enchost;
-    uint bestorder = 0;
-
-    QMap<int, EncoderLink *>::Iterator iter = encoderList->begin();
-    for (; iter != encoderList->end(); ++iter)
-    {
-        EncoderLink *elink = *iter;
-
-        if (elink->IsLocal())
-            enchost = gCoreContext->GetHostName();
-        else
-            enchost = elink->GetHostName();
-
-        LOG(VB_RECORD, LOG_INFO, LOC +
-            QString("Checking card %1. Best card so far %2")
-            .arg(iter.key()).arg(retval));
-
-        if (!elink->IsConnected() || elink->IsTunerLocked())
-            continue;
-
-        vector<InputInfo> inputs = elink->GetFreeInputs(excluded_cardids);
-
-        for (uint i = 0; i < inputs.size(); ++i)
-        {
-            if (!encoder || inputs[i].livetvorder < bestorder)
-            {
-                retval = iter.key();
-                encoder = elink;
-                bestorder = inputs[i].livetvorder;
-            }
-        }
-    }
-
-    LOG(VB_RECORD, LOG_INFO, LOC +
-        QString("Best card is %1").arg(retval));
-
-    strlist << QString::number(retval);
-
-    if (encoder)
-    {
-        if (encoder->IsLocal())
-        {
-            strlist << gCoreContext->GetBackendServerIP();
-            strlist << QString::number(gCoreContext->GetBackendServerPort());
-        }
-        else
-        {
-            strlist << gCoreContext->GetBackendServerIP(encoder->GetHostName());
-            strlist << QString::number(gCoreContext->GetBackendServerPort(encoder->GetHostName()));
-        }
-    }
-    else
-    {
-        strlist << "nohost";
-        strlist << "-1";
-    }
-
-    SendResponse(pbssock, strlist);
-}
-
-void MainServer::HandleGetFreeRecorderCount(PlaybackSock *pbs)
-{
-    MythSocket *pbssock = pbs->getSocket();
-
-    vector<uint> excluded_cardids;
-    QStringList strlist;
-    int count = 0;
-
-    QMap<int, EncoderLink *>::Iterator iter = encoderList->begin();
-    for (; iter != encoderList->end(); ++iter)
-    {
-        EncoderLink *elink = *iter;
-
-        if (elink->IsConnected() && !elink->IsTunerLocked() &&
-            !elink->GetFreeInputs(excluded_cardids).empty())
-        {
-            count++;
-        }
-    }
-
-    strlist << QString::number(count);
-
-    SendResponse(pbssock, strlist);
-}
-
 static bool comp_livetvorder(const InputInfo &a, const InputInfo &b)
 {
-    return a.livetvorder < b.livetvorder;
+    if (a.livetvorder != b.livetvorder)
+        return a.livetvorder < b.livetvorder;
+    return a.inputid < b.inputid;
 }
 
-void MainServer::HandleGetFreeRecorderList(PlaybackSock *pbs)
+void MainServer::HandleGetFreeInputInfo(PlaybackSock *pbs,
+                                        uint excluded_input)
 {
+    LOG(VB_CHANNEL, LOG_INFO,
+        LOC + QString("Excluding input %1")
+        .arg(excluded_input));
+
     MythSocket *pbssock = pbs->getSocket();
+    vector<InputInfo> busyinputs;
+    vector<InputInfo> freeinputs;
+    QMap<uint, QSet<uint> > groupids;
 
-    vector<uint> excluded_cardids;
-    vector<InputInfo> allinputs;
-
+    // Lopp over each encoder and divide the inputs into busy and free
+    // lists.
     QMap<int, EncoderLink *>::Iterator iter = encoderList->begin();
     for (; iter != encoderList->end(); ++iter)
     {
         EncoderLink *elink = *iter;
+        InputInfo info;
+        info.inputid = elink->GetInputID();
 
         if (!elink->IsConnected() || elink->IsTunerLocked())
+        {
+            LOG(VB_CHANNEL, LOG_INFO,
+                LOC + QString("Input %1 is locked or not connected")
+                .arg(info.inputid));
             continue;
+        }
 
-        vector<InputInfo> inputs = elink->GetFreeInputs(excluded_cardids);
-        allinputs.insert(allinputs.end(), inputs.begin(), inputs.end());
-    }
+        vector<uint> infogroups;
+        CardUtil::GetInputInfo(info, &infogroups);
+        for (uint i = 0; i < infogroups.size(); ++i)
+            groupids[info.inputid].insert(infogroups[i]);
 
-    stable_sort(allinputs.begin(), allinputs.end(), comp_livetvorder);
-
-    QStringList strlist;
-    QMap<int, bool> cardidused;
-    for (uint i = 0; i < allinputs.size(); ++i)
-    {
-        uint cardid = allinputs[i].cardid;
-        if (!cardidused[cardid])
+        InputInfo busyinfo;
+        if (info.inputid != excluded_input && elink->IsBusy(&busyinfo))
         {
-            strlist << QString::number(cardid);
-            cardidused[cardid] = true;
+            LOG(VB_CHANNEL, LOG_DEBUG,
+                LOC + QString("Input %1 is busy on %2/%3")
+                .arg(info.inputid).arg(busyinfo.chanid).arg(busyinfo.mplexid));
+            info.chanid = busyinfo.chanid;
+            info.mplexid = busyinfo.mplexid;
+            busyinputs.push_back(info);
+        }
+        else if (info.livetvorder)
+        {
+            LOG(VB_CHANNEL, LOG_DEBUG,
+                LOC + QString("Input %1 is free")
+                .arg(info.inputid));
+            freeinputs.push_back(info);
         }
     }
 
-    if (strlist.size() == 0)
-        strlist << "0";
-
-    SendResponse(pbssock, strlist);
-}
-
-void MainServer::HandleGetNextFreeRecorder(QStringList &slist,
-                                           PlaybackSock *pbs)
-{
-    MythSocket *pbssock = pbs->getSocket();
-    QString pbshost = pbs->getHostname();
-
-    QStringList strlist;
-    int retval = -1;
-    int currrec = slist[1].toInt();
-
-    EncoderLink *encoder = NULL;
-    QString enchost;
-
-    LOG(VB_RECORD, LOG_INFO, LOC +
-        QString("Getting next free recorder after : %1")
-            .arg(currrec));
-
-    // find current recorder
-    QMap<int, EncoderLink *>::Iterator iter, curr = encoderList->find(currrec);
-
-    if (currrec > 0 && curr != encoderList->end())
+    // Loop over each busy input and restrict or delete any free
+    // inputs that are in the same group.
+    vector<InputInfo>::iterator busyiter = busyinputs.begin();
+    for (; busyiter != busyinputs.end(); ++busyiter)
     {
-        vector<uint> excluded_cardids;
-        excluded_cardids.push_back(currrec);
+        InputInfo &busyinfo = *busyiter;
 
-        // cycle through all recorders
-        for (iter = curr;;)
+        vector<InputInfo>::iterator freeiter = freeinputs.begin();
+        while (freeiter != freeinputs.end())
         {
-            EncoderLink *elink;
+            InputInfo &freeinfo = *freeiter;
 
-            // last item? go back
-            if (++iter == encoderList->end())
+            if ((groupids[busyinfo.inputid] & groupids[freeinfo.inputid])
+                .isEmpty())
             {
-                iter = encoderList->begin();
+                ++freeiter;
+                continue;
             }
 
-            elink = *iter;
-
-            if (retval == -1 && elink->IsConnected() &&
-                !elink->IsTunerLocked() &&
-                !elink->GetFreeInputs(excluded_cardids).empty())
+            if (busyinfo.sourceid == freeinfo.sourceid)
             {
-                encoder = elink;
-                retval = iter.key();
+                LOG(VB_CHANNEL, LOG_DEBUG,
+                    LOC + QString("Input %1 is limited to %2/%3 by input %4")
+                    .arg(freeinfo.inputid).arg(busyinfo.chanid)
+                    .arg(busyinfo.mplexid).arg(busyinfo.inputid));
+                freeinfo.chanid = busyinfo.chanid;
+                freeinfo.mplexid = busyinfo.mplexid;
+                ++freeiter;
+                continue;
             }
 
-            // cycled right through? no more available recorders
-            if (iter == curr)
-                break;
+            LOG(VB_CHANNEL, LOG_DEBUG,
+                LOC + QString("Input %1 is unavailable by input %2")
+                .arg(freeinfo.inputid).arg(busyinfo.inputid));
+            freeiter = freeinputs.erase(freeiter);
         }
     }
-    else
+
+    // Return the results in livetvorder.
+    stable_sort(freeinputs.begin(), freeinputs.end(), comp_livetvorder);
+    QStringList strlist;
+    for (uint i = 0; i < freeinputs.size(); ++i)
     {
-        HandleGetFreeRecorder(pbs);
-        return;
+        LOG(VB_CHANNEL, LOG_INFO,
+            LOC + QString("Input %1 is available on %2/%3")
+            .arg(freeinputs[i].inputid).arg(freeinputs[i].chanid)
+            .arg(freeinputs[i].mplexid));
+        freeinputs[i].ToStringList(strlist);
     }
-
-
-    strlist << QString::number(retval);
-
-    if (encoder)
-    {
-        if (encoder->IsLocal())
-        {
-            strlist << gCoreContext->GetBackendServerIP();
-            strlist << QString::number(gCoreContext->GetBackendServerPort());
-        }
-        else
-        {
-            strlist << gCoreContext->GetBackendServerIP(encoder->GetHostName());
-            strlist << QString::number(gCoreContext->GetBackendServerPort(encoder->GetHostName()));
-        }
-    }
-    else
-    {
-        strlist << "nohost";
-        strlist << "-1";
-    }
-
     SendResponse(pbssock, strlist);
 }
 
@@ -4398,7 +4299,7 @@ void MainServer::HandleRecorderQuery(QStringList &slist, QStringList &commands,
         else
         {
             ProgramInfo dummy;
-            dummy.SetInputID(enc->GetCardID());
+            dummy.SetInputID(enc->GetInputID());
             dummy.ToStringList(retlist);
         }
     }
@@ -4462,7 +4363,7 @@ void MainServer::HandleRecorderQuery(QStringList &slist, QStringList &commands,
         else
         {
             ProgramInfo dummy;
-            dummy.SetInputID(enc->GetCardID());
+            dummy.SetInputID(enc->GetInputID());
             dummy.ToStringList(retlist);
         }
     }
@@ -4527,22 +4428,6 @@ void MainServer::HandleRecorderQuery(QStringList &slist, QStringList &commands,
         int recording = slist[2].toInt();
         enc->SetLiveRecording(recording);
         retlist << "OK";
-    }
-    else if (command == "GET_FREE_INPUTS")
-    {
-        vector<uint> excluded_cardids;
-        for (int i = 2; i < slist.size(); i++)
-            excluded_cardids.push_back(slist[i].toUInt());
-
-        vector<InputInfo> inputs = enc->GetFreeInputs(excluded_cardids);
-
-        if (inputs.empty())
-            retlist << "EMPTY_LIST";
-        else
-        {
-            for (uint i = 0; i < inputs.size(); i++)
-                inputs[i].ToStringList(retlist);
-        }
     }
     else if (command == "GET_INPUT")
     {
@@ -4643,7 +4528,7 @@ void MainServer::HandleRecorderQuery(QStringList &slist, QStringList &commands,
     else if (command == "SHOULD_SWITCH_CARD")
     {
         QString chanid = slist[2];
-        retlist << QString::number((int)(enc->ShouldSwitchToAnotherCard(chanid)));
+        retlist << QString::number((int)(enc->ShouldSwitchToAnotherInput(chanid)));
     }
     else if (command == "CHECK_CHANNEL_PREFIX")
     {
@@ -4877,24 +4762,8 @@ void MainServer::HandleRemoteEncoder(QStringList &slist, QStringList &commands,
         else
         {
             ProgramInfo dummy;
-            dummy.SetInputID(enc->GetCardID());
+            dummy.SetInputID(enc->GetInputID());
             dummy.ToStringList(retlist);
-        }
-    }
-    else if (command == "GET_FREE_INPUTS")
-    {
-        vector<uint> excluded_cardids;
-        for (int i = 2; i < slist.size(); i++)
-            excluded_cardids.push_back(slist[i].toUInt());
-
-        vector<InputInfo> inputs = enc->GetFreeInputs(excluded_cardids);
-
-        if (inputs.empty())
-            retlist << "EMPTY_LIST";
-        else
-        {
-            for (uint i = 0; i < inputs.size(); i++)
-                inputs[i].ToStringList(retlist);
         }
     }
 
@@ -4979,7 +4848,7 @@ size_t MainServer::GetCurrentMaxBitrate(void)
         long long thisKBperMin = (((size_t)maxBitrate)*((size_t)15))>>11;
         totalKBperMin += thisKBperMin;
         LOG(VB_FILE, LOG_INFO, LOC + QString("Cardid %1: max bitrate %2 KB/min")
-                .arg(enc->GetCardID()).arg(thisKBperMin));
+                .arg(enc->GetInputID()).arg(thisKBperMin));
     }
 
     LOG(VB_FILE, LOG_INFO, LOC +
@@ -6495,6 +6364,7 @@ void MainServer::HandleMusicTagAddImage(const QStringList& slist, PlaybackSock* 
         SendResponse(pbssock, strlist);
 }
 
+
 void MainServer::HandleMusicTagRemoveImage(const QStringList& slist, PlaybackSock* pbs)
 {
 // format: MUSIC_TAG_REMOVEIMAGE <hostname> <songid> <imageid>
@@ -6625,350 +6495,239 @@ void MainServer::HandleMusicTagRemoveImage(const QStringList& slist, PlaybackSoc
         SendResponse(pbssock, strlist);
 }
 
-// Expects: START or STOP
-// Replies: OK or error
-QString MainServer::HandleScanImages(QStringList &slist,
-                                     PlaybackSock *pbs)
+void MainServer::HandleMusicFindLyrics(const QStringList &slist, PlaybackSock *pbs)
 {
-    ImageScan *is = ImageScan::getInstance();
+// format: MUSIC_LYRICS_FIND <hostname> <songid> <grabbername> <artist (optional)> <album (optional)> <title (optional)>
+// if artist is present then album and title must also be included (only used for radio and cd tracks)
 
-    if (slist[1] == "START")
-
-        is->StartSync();
-
-    else if (slist[1] == "STOP")
-
-        is->StopSync();
-
-    else
-        return QString("Unknown Command %1").arg(slist[1]);
-
-    return QString();
-}
-
-// Expects: nothing
-// Replies: current scan status as an int (0 or 1)
-//        : number of images already scanned
-//        : total number of images detected
-void MainServer::HandleQueryImageScanStatus(PlaybackSock *pbs)
-{
-    ImageScan *is = ImageScan::getInstance();
     QStringList strlist;
 
-    strlist << "OK"
-            << QString::number(is->SyncIsRunning()) // return bool as an int
-            << QString::number(is->GetCurrent())
-            << QString::number(is->GetTotal());
+    MythSocket *pbssock = pbs->getSocket();
 
-    SendResponse(pbs->getSocket(), strlist);
-}
+    QString hostname = slist[1];
+    QString songid = slist[2];
+    QString grabberName = slist[3];
+    QString artist = "";
+    QString album = "";
+    QString title = "";
 
-// Expects: recreate-even-if-already-present boolean flag, list of image ids
-// Replies: OK
-void MainServer::HandleCreateThumbnails(QStringList &slist,
-                                        PlaybackSock *pbs)
-{
-    // single flag applies to all thumbnails
-    bool recreate = slist[1].toInt();
-
-    ImageUtils *iu = ImageUtils::getInstance();
-    ImageThumbGen *thumbGen = ImageThumbGen::getInstance();
-
-    for (int i = 2; i < slist.size(); ++i)
+    if (slist.size() == 7)
     {
-        int id = slist[i].toInt();
+        artist = slist[4];
+        album = slist[5];
+        title = slist[6];
+    }
 
-        ImageMetadata *im = new ImageMetadata();
-
-        // find requested image in DB
-        iu->LoadFileFromDB(im, id);
-
-        if (im->m_fileName.isEmpty())
+    if (ismaster && !gCoreContext->IsThisHost(hostname))
+    {
+        // forward the request to the slave BE
+        PlaybackSock *slave = GetMediaServerByHostname(hostname);
+        if (slave)
         {
-            LOG(VB_FILE, LOG_DEBUG, QString("Image %1 not found in Db").arg(id));
-            delete im;
+            LOG(VB_GENERAL, LOG_INFO, LOC +
+                QString("HandleMusicFindLyrics: asking slave '%1' to "
+                        "find lyrics").arg(hostname));
+            strlist = slave->ForwardRequest(slist);
+            slave->DecrRef();
+
+            if (pbssock)
+                SendResponse(pbssock, strlist);
+
+            return;
         }
         else
-            // pass to thumbnail generator
-            thumbGen->AddToThumbnailList(im, recreate);
-    }
-
-    // Restart generator
-    thumbGen->StartThumbGen();
-
-    QStringList ok = QStringList("OK");
-    SendResponse(pbs->getSocket(), ok);
-}
-
-// Expects: image id
-// Replies: error or nothing
-QString MainServer::HandleDeleteImage(QStringList &slist, PlaybackSock *pbs)
-{
-    QString sgName = IMAGE_STORAGE_GROUP;
-    StorageGroup sg = StorageGroup(sgName, gCoreContext->GetHostName());
-    ImageUtils *iu = ImageUtils::getInstance();
-
-    int id = slist[1].toInt();
-
-    // Find image in DB
-    ImageMetadata *im = new ImageMetadata();
-    iu->LoadFileFromDB(im, id);
-    QString fileName = im->m_fileName;
-    delete im;
-
-    if (fileName.isEmpty())
-
-        return QString("Image %1 not found in Db").arg(id);
-
-    // Find image file
-    QString imageFileName = sg.FindFile(fileName);
-
-    if (imageFileName.isEmpty())
-
-        return QString("File %1 for image %2 not found")
-                .arg(fileName)
-                .arg(id);
-
-    // Remove file
-    if (!QFile::remove(imageFileName))
-
-        return QString("Could not delete file %1 for image %2")
-                .arg(imageFileName)
-                .arg(id);
-
-    LOG(VB_FILE, LOG_DEBUG,
-        QString("Deleted %1 for image %2")
-        .arg(imageFileName)
-        .arg(id));
-
-    // Remove the database entry once the file has been deleted.
-    if (!iu->RemoveFileFromDB(id))
-
-        return QString("Delete from Db failed for image %1").arg(id);
-
-    // success
-    return QString();
-}
-
-// Expects: image id, new name
-// Replies: error or nothing
-QString MainServer::HandleRenameImage(QStringList &slist, PlaybackSock *pbs)
-{
-    QString sgName = IMAGE_STORAGE_GROUP;
-    StorageGroup sg = StorageGroup(sgName, gCoreContext->GetHostName(), false);
-    ImageUtils *iu = ImageUtils::getInstance();
-
-    int id = slist[1].toInt();
-    QString newName = slist[2];
-
-    // New name must not contain a path
-    if (newName.contains("/") || newName.contains("\\"))
-
-        return QString("New filename '%1' for image %2 must "
-                       "not contain a path")
-                .arg(newName)
-                .arg(id);
-
-    // Find image in DB
-    ImageMetadata *im = new ImageMetadata();
-    iu->LoadFileFromDB(im, id);
-    QString relFileName = im->m_fileName;
-    QString name = im->m_name;
-    QString path = im->m_path;
-    delete im;
-
-    if (relFileName.isEmpty())
-
-        return QString("Image %1 not found in Db").arg(id);
-
-    // Find image file
-    QString absFileName = sg.FindFile(relFileName);
-
-    if (absFileName.isEmpty())
-
-        return QString("File %1 for image %2 not found")
-                .arg(relFileName)
-                .arg(id);
-
-    // Rename the file
-    QFile file;
-    file.setFileName(absFileName);
-    QFileInfo info = QFileInfo(file);
-    QString absNewName = QString("%1/%2").arg(info.absolutePath()).arg(newName);
-
-    if (!file.rename(absNewName))
-
-        return QString("Renaming %1 to %2 failed for image %3")
-                .arg(name)
-                .arg(newName)
-                .arg(id);
-
-    LOG(VB_FILE, LOG_DEBUG,
-        QString("Renamed %1 to %2 for image %3")
-        .arg(name)
-        .arg(newName)
-        .arg(id));
-
-    // Update the database
-    MSqlQuery query(MSqlQuery::InitCon());
-    query.prepare(QString("UPDATE gallery_files SET "
-                          "name           = :NAME "
-                          "WHERE file_id  = :ID;"));
-    query.bindValue(":NAME", newName);
-    query.bindValue(":ID",   id);
-
-    if (!query.exec())
-
-        return QString("Rename in Db failed for image %1").arg(id);
-
-    // success
-    return QString();
-}
-
-// Expects: image id, property, tag value
-// Replies: error or nothing
-QString MainServer::HandleSetImageExif(QStringList &slist, PlaybackSock *pbs)
-{
-    QString sgName = IMAGE_STORAGE_GROUP;
-    StorageGroup sg = StorageGroup(sgName, gCoreContext->GetHostName());
-    ImageUtils *iu = ImageUtils::getInstance();
-
-    int id = slist[1].toInt();
-    QString property = slist[2];
-    QString tagValue = slist[3];
-
-    // validate
-    QString tag;
-    int value;
-    if (property == "ORIENTATION")
-    {
-        tag = "Exif.Image.Orientation";
-        value = tagValue.toInt();
-
-        // See http://jpegclub.org/exif_orientation.html for details
-        if ( value < 1 || value > 8)
-
-            return QString("Invalid orientation %1 requested for image %2")
-                    .arg(tagValue)
-                    .arg(id);
+        {
+            LOG(VB_GENERAL, LOG_INFO, LOC +
+                QString("HandleMusicFindLyrics: Failed to grab slave "
+                        "socket on '%1'").arg(hostname));
+        }
     }
     else
-        return QString("Setting property %1 not implemented").arg(property);
-
-    // Find image in DB
-    ImageMetadata *im = new ImageMetadata();
-    iu->LoadFileFromDB(im, id);
-    QString fileName = im->m_fileName;
-    delete im;
-
-    if (fileName.isEmpty())
-
-        return QString("Image %1 not found in Db").arg(id);
-
-    // Find image file
-    QString imageFileName = sg.FindFile(fileName);
-
-    if (imageFileName.isEmpty())
-
-        return QString("File %1 for image %2 not found")
-                .arg(fileName)
-                .arg(id);
-
-    // Set Exif
-    bool ok;
-    iu->SetExifValue(imageFileName, tag, tagValue, &ok);
-
-    if (!ok)
-
-        return QString("Setting exif %1 failed for image %2")
-                .arg(property)
-                .arg(id);
-
-    LOG(VB_FILE, LOG_DEBUG,
-        QString("Set exif %1 to %2 for image %3")
-        .arg(property)
-        .arg(tagValue)
-        .arg(id));
-
-    // Update the database
-    if (property == "ORIENTATION")
     {
-        MSqlQuery query(MSqlQuery::InitCon());
-        query.prepare(QString("UPDATE gallery_files SET "
-                              "orientation    = :ORIENT "
-                              "WHERE file_id  = :ID;"));
-        query.bindValue(":ORIENT", value);
-        query.bindValue(":ID",     id);
+        QStringList paramList;
+        paramList.append(QString("--songid='%1'").arg(songid));
+        paramList.append(QString("--grabber='%1'").arg(grabberName));
 
-        if (!query.exec())
+        if (!artist.isEmpty())
+            paramList.append(QString("--artist=\"%1\"").arg(artist));
 
-            return QString("Set exif in Db failed for image %1").arg(id);
+        if (!album.isEmpty())
+            paramList.append(QString("--album=\"%1\"").arg(album));
+
+        if (!title.isEmpty())
+            paramList.append(QString("--title=\"%1\"").arg(title));
+
+        QString command = GetAppBinDir() + "mythutil --findlyrics " + paramList.join(" ");
+
+        QScopedPointer<MythSystem> cmd(MythSystem::Create(command,
+                                       kMSAutoCleanup | kMSRunBackground |
+                                       kMSDontDisableDrawing | kMSProcessEvents |
+                                       kMSDontBlockInputDevs));
     }
-    // success
-    return QString();
+
+    strlist << "OK";
+
+    if (pbssock)
+        SendResponse(pbssock, strlist);
 }
 
-// Expects: image id
-// Replies: error or list of
-QString MainServer::HandleGetImageExif(QStringList &slist, PlaybackSock *pbs)
+void MainServer::HandleMusicGetLyricGrabbers(const QStringList &slist, PlaybackSock *pbs)
 {
-    QString sgName = IMAGE_STORAGE_GROUP;
-    StorageGroup sg = StorageGroup(sgName, gCoreContext->GetHostName());
-    ImageUtils *iu = ImageUtils::getInstance();
+    QStringList strlist;
 
-    int id = slist[1].toInt();
+    MythSocket *pbssock = pbs->getSocket();
 
-    // Find image in DB
-    ImageMetadata *im = new ImageMetadata();
-    iu->LoadFileFromDB(im, id);
-    QString fileName = im->m_fileName;
-    delete im;
+    QString  scriptDir = GetShareDir() + "metadata/Music/lyrics";
+    QDir d(scriptDir);
 
-    if (fileName.isEmpty())
-
-        return QString("Image %1 not found in Db").arg(id);
-
-    // Find image file
-    QString imageFileName = sg.FindFile(fileName);
-
-    if (imageFileName.isEmpty())
-
-        return QString("File %1 for image %2 not found")
-                .arg(fileName)
-                .arg(id);
-
-    // Get Exif
-    QList<QStringList> valueList = iu->GetAllExifValues(imageFileName);
-
-    if (valueList.size() == 0)
-
-        return QString("Could not read %1 exif tags for image %2")
-                .arg(imageFileName)
-                .arg(id);
-
-    // Each property is described by a stringlist of
-    // <familyname>, <groupname>, <tagname>, <taglabel>, <value>
-    // Combine label/value using a (hopefully unique) delimiter
-    // to return 1 string per property.
-    // Clients must use the supplied seperator to split the strings
-    const QString seperator = ":|-|:";
-    QStringList result;
-    result << "OK" << seperator;
-
-    for (int i = 0; i < valueList.size(); ++i)
+    if (!d.exists())
     {
-        const QStringList values = valueList.at(i);
+        LOG(VB_GENERAL, LOG_ERR, QString("Cannot find lyric scripts directory: %1").arg(scriptDir));
+        strlist << QString("ERROR: Cannot find lyric scripts directory: %1").arg(scriptDir);
 
-        result.append(QString("%1%2%3")
-                      .arg(values.at(4))
-                      .arg(seperator)
-                      .arg(values.at(5)));
+        if (pbssock)
+            SendResponse(pbssock, strlist);
+
+        return;
     }
 
-    SendResponse(pbs->getSocket(), result);
+    d.setFilter(QDir::Files | QDir::NoDotAndDotDot);
+    d.setNameFilters(QStringList("*.py"));
+    QFileInfoList list = d.entryInfoList();
+    if (list.isEmpty())
+    {
+        LOG(VB_GENERAL, LOG_ERR, QString("Cannot find any lyric scripts in: %1").arg(scriptDir));
+        strlist << QString("ERROR: Cannot find any lyric scripts in: %1").arg(scriptDir);
 
-    // success
-    return QString();
+        if (pbssock)
+            SendResponse(pbssock, strlist);
+
+        return;
+    }
+
+    QStringList scripts;
+    QFileInfoList::const_iterator it = list.begin();
+    const QFileInfo *fi;
+
+    while (it != list.end())
+    {
+        fi = &(*it);
+        ++it;
+        LOG(VB_FILE, LOG_NOTICE, QString("Found lyric script at: %1").arg(fi->filePath()));
+        scripts.append(fi->filePath());
+    }
+
+    QStringList grabbers;
+
+    // query the grabbers to get their name
+    for (int x = 0; x < scripts.count(); x++)
+    {
+        QProcess p;
+        p.start(QString("python %1 -v").arg(scripts.at(x)));
+        p.waitForFinished(-1);
+        QString result = p.readAllStandardOutput();
+
+        QDomDocument domDoc;
+        QString errorMsg;
+        int errorLine, errorColumn;
+
+        if (!domDoc.setContent(result, false, &errorMsg, &errorLine, &errorColumn))
+        {
+            LOG(VB_GENERAL, LOG_ERR,
+                QString("FindLyrics: Could not parse version from %1").arg(scripts.at(x)) +
+                QString("\n\t\t\tError at line: %1  column: %2 msg: %3").arg(errorLine).arg(errorColumn).arg(errorMsg));
+            continue;
+        }
+
+        QDomNodeList itemList = domDoc.elementsByTagName("grabber");
+        QDomNode itemNode = itemList.item(0);
+
+        grabbers.append(itemNode.namedItem(QString("name")).toElement().text());
+    }
+
+    grabbers.sort();
+
+    strlist << "OK";
+
+    for (int x = 0; x < grabbers.count(); x++)
+        strlist.append(grabbers.at(x));
+
+    if (pbssock)
+        SendResponse(pbssock, strlist);
+}
+
+void MainServer::HandleMusicSaveLyrics(const QStringList& slist, PlaybackSock* pbs)
+{
+// format: MUSIC_LYRICS_SAVE <hostname> <songid>
+// followed by the lyrics lines
+
+    QStringList strlist;
+
+    MythSocket *pbssock = pbs->getSocket();
+
+    QString hostname = slist[1];
+    int songID = slist[2].toInt();
+
+    if (ismaster && !gCoreContext->IsThisHost(hostname))
+    {
+        // forward the request to the slave BE
+        PlaybackSock *slave = GetMediaServerByHostname(hostname);
+        if (slave)
+        {
+            LOG(VB_GENERAL, LOG_INFO, LOC +
+                QString("HandleMusicSaveLyrics: asking slave '%1' to "
+                        "save the lyrics").arg(hostname));
+            strlist = slave->ForwardRequest(slist);
+            slave->DecrRef();
+
+            if (pbssock)
+                SendResponse(pbssock, strlist);
+
+            return;
+        }
+        else
+        {
+            LOG(VB_GENERAL, LOG_INFO, LOC +
+               QString("HandleMusicSaveLyrics: Failed to grab slave "
+                        "socket on '%1'").arg(hostname));
+        }
+    }
+    else
+    {
+        MusicMetadata *mdata = MusicMetadata::createFromID(songID);
+        if (!mdata)
+        {
+            LOG(VB_GENERAL, LOG_ERR, QString("Cannot find metadata for trackid: %1").arg(songID));
+            strlist << QString("ERROR: Cannot find metadata for trackid: %1").arg(songID);
+
+            if (pbssock)
+                SendResponse(pbssock, strlist);
+
+            return;
+        }
+
+        QString lyricsFile = GetConfDir() + QString("/MythMusic/Lyrics/%1.txt").arg(songID);
+
+        // remove any existing lyrics for this songID
+        if (QFile::exists(lyricsFile))
+            QFile::remove(lyricsFile);
+
+        // save the new lyrics
+        QFile file(QLatin1String(qPrintable(lyricsFile)));
+
+        if (file.open(QIODevice::WriteOnly))
+        {
+            QTextStream stream(&file);
+            for (int x = 3; x < slist.count(); x++)
+                stream << slist.at(x);
+            file.close();
+        }
+    }
+
+    strlist << "OK";
+
+    if (pbssock)
+        SendResponse(pbssock, strlist);
 }
 
 void MainServer::HandleFileTransferQuery(QStringList &slist,
@@ -7696,7 +7455,7 @@ void MainServer::connectionClosed(MythSocket *socket)
 
                         elink->SetSocket(NULL);
                         if (m_sched)
-                            disconnectedSlaves.push_back(elink->GetCardID());
+                            disconnectedSlaves.push_back(elink->GetInputID());
                     }
                 }
                 if (m_sched && !isFallingAsleep)
@@ -8113,7 +7872,7 @@ void MainServer::reconnectTimeout(void)
         else
         {
             ProgramInfo dummy;
-            dummy.SetInputID(elink->GetCardID());
+            dummy.SetInputID(elink->GetInputID());
             dummy.ToStringList(strlist);
         }
     }

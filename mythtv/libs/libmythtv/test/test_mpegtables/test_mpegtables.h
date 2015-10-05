@@ -29,6 +29,9 @@
 #define MSKIP(MSG) QSKIP(MSG)
 #endif
 
+/* test data */
+extern unsigned char eit_data_0000[];
+
 class TestMPEGTables: public QObject
 {
     Q_OBJECT
@@ -59,4 +62,8 @@ class TestMPEGTables: public QObject
      * custom descriptors
      */
     void PrivateUPCCablecomEpisodetitleDescriptor_test (void);
+
+    /** test for DVB-EIT style cast
+     */
+    void ItemList_test (void);
 };

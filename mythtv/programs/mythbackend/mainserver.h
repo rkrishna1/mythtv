@@ -181,6 +181,7 @@ class MainServer : public QObject, public MythSocketCBs
     void HandleGetExpiringRecordings(PlaybackSock *pbs);
     void HandleSGGetFileList(QStringList &sList, PlaybackSock *pbs);
     void HandleSGFileQuery(QStringList &sList, PlaybackSock *pbs);
+    void HandleGetFreeInputInfo(PlaybackSock *pbs, uint excluded_input);
     void HandleGetNextFreeRecorder(QStringList &slist, PlaybackSock *pbs);
     void HandleGetFreeRecorder(PlaybackSock *pbs);
     void HandleGetFreeRecorderCount(PlaybackSock *pbs);
@@ -228,13 +229,9 @@ class MainServer : public QObject, public MythSocketCBs
     void HandleMusicTagRemoveImage(const QStringList &slist, PlaybackSock *pbs);
     void HandleMusicTagChangeImage(const QStringList &slist, PlaybackSock *pbs);
     void HandleMusicCalcTrackLen(const QStringList &slist, PlaybackSock *pbs);
-    QString HandleScanImages(QStringList &slist, PlaybackSock *pbs);
-    void HandleQueryImageScanStatus(PlaybackSock *pbs);
-    void HandleCreateThumbnails(QStringList &slist, PlaybackSock *pbs);
-    QString HandleDeleteImage(QStringList &slist, PlaybackSock *pbs);
-    QString HandleRenameImage(QStringList &slist, PlaybackSock *pbs);
-    QString HandleSetImageExif(QStringList &slist, PlaybackSock *pbs);
-    QString HandleGetImageExif(QStringList &slist, PlaybackSock *pbs);
+    void HandleMusicFindLyrics(const QStringList &slist, PlaybackSock *pbs);
+    void HandleMusicGetLyricGrabbers(const QStringList &slist, PlaybackSock *pbs);
+    void HandleMusicSaveLyrics(const QStringList &slist, PlaybackSock *pbs);
     void HandleVersion(MythSocket *socket, const QStringList &slist);
     void HandleBackendRefresh(MythSocket *socket);
     void HandleQueryLoad(PlaybackSock *pbs);

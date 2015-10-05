@@ -15,7 +15,6 @@ class SERVICE_PUBLIC ImageServices : public Service
     Q_OBJECT
     Q_CLASSINFO( "version"    , "2.0" )
     Q_CLASSINFO( "SetImageInfo_Method",             "POST" )
-    Q_CLASSINFO( "RemoveImageFromDB_Method",        "POST" )
     Q_CLASSINFO( "RemoveImage_Method",              "POST" )
     Q_CLASSINFO( "RenameImage_Method",              "POST" )
     Q_CLASSINFO( "StartSync_Method",                "POST" )
@@ -54,7 +53,6 @@ class SERVICE_PUBLIC ImageServices : public Service
 
         virtual DTC::ImageMetadataInfoList* GetImageInfoListByFileName  ( const QString &FileName ) = 0;
 
-        virtual bool                        RemoveImageFromDB  ( int   Id ) = 0;
         virtual bool                        RemoveImage        ( int   Id ) = 0;
         virtual bool                        RenameImage        ( int Id,
                                                                  const QString &NewName ) = 0;
@@ -63,8 +61,7 @@ class SERVICE_PUBLIC ImageServices : public Service
         virtual bool                        StopSync           ( void ) = 0;
         virtual DTC::ImageSyncInfo*         GetSyncStatus      ( void ) = 0;
 
-        virtual bool                        CreateThumbnail    ( int  Id,
-                                                                 bool Recreate) = 0;
+        virtual bool                        CreateThumbnail    ( int  Id ) = 0;
 };
 
 #endif

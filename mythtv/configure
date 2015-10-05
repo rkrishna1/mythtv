@@ -116,6 +116,7 @@ Advanced options (experts only):
   --firewire-sdk           specify location for mac FireWire SDK [mac only]
   --disable-firewire       disable support for FireWire cable boxes
   --disable-hdhomerun      disable support for HDHomeRun boxes
+  --disable-vbox           disable support for V@Box TV Gateway boxes
   --disable-ceton          disable support for Ceton cards
   --disable-v4l2           disable Video4Linux support
   --disable-ivtv           disable ivtv support (PVR-x50) req. v4l2 support
@@ -134,7 +135,6 @@ Advanced options (experts only):
   --disable-vaapi          disable VAAPI hardware accelerated video decoding
   --disable-dxva2          disable hardware accelerated decoding on windows
   --disable-opengl-video   disable OpenGL based video display
-  --disable-quartz-video   disable Mac OS X CoreVideo based video display
   --disable-libass         disable libass SSA/ASS subtitle support
 
   --enable-mac-bundle      produce standalone OS X apps (e.g. mythfrontend.app)
@@ -154,6 +154,7 @@ Advanced options (experts only):
   --perl-config-opts=OPTS  Additional options to pass when generating
                            Makefile.perl for building Perl bindings.
   --enable-mythlogserver   Enable mythlogserver logging daemon facility
+  --enable-bdjava          Enable BD-J support for Blu-ray discs
 
 External codec library options (used for mythffmpeg and streaming transcode):
   --enable-libmp3lame      enable MP3 encoding via libmp3lame [no]
@@ -409,6 +410,8 @@ Toolchain options:
   --extra-version=STRING   version string suffix []
   --optflags=OPTFLAGS      override optimization-related compiler flags
   --build-suffix=SUFFIX    library name suffix []
+  --bdj-type=TYPE          Specify the type of BD-J implementation (j2se,
+                           j2me) [$bdj_type]
   --enable-pic             build position-independent code
   --enable-thumb           compile for Thumb instruction set
   --enable-lto             use link-time optimization
@@ -1865,6 +1868,7 @@ HEADERS_LIST="
     dlfcn_h
     dxva_h
     ES2_gl_h
+    fcntl_h
     gsm_h
     io_h
     mach_mach_time_h
@@ -2096,6 +2100,7 @@ CONFIG_EXTRA="
 
 MYTHTV_CONFIG_LIST='
     backend
+    bdjava
     bindings_perl
     bindings_python
     bindings_php
@@ -2107,6 +2112,7 @@ MYTHTV_CONFIG_LIST='
     firewire
     frontend
     hdhomerun
+    vbox
     ceton
     hdpvr
     ivtv
@@ -2118,7 +2124,6 @@ MYTHTV_CONFIG_LIST='
     libfftw3
     libmpeg2external
     libxml2
-    libudf
     lirc
     mheg
     opengl
@@ -2126,7 +2131,6 @@ MYTHTV_CONFIG_LIST='
     qtwebkit
     qtscript
     qtdbus
-    quartz_video
     sdl
     taglib
     v4l2
@@ -2171,10 +2175,13 @@ MYTHTV_LIST='
 
 USING_LIST='
     appleremote
+    bdjava
     bindings_perl
     bindings_python
     bindings_php
     darwin_da
+    fontconfig
+    freetype2
     mythtranscode
     dxva2
     opengl
@@ -2228,6 +2235,8 @@ MYTHTV_CMDLINE_SET='
     qmakespecs
     samples
     source_path
+    bdj_type
+    JDK_HOME
 '
 
 CMDLINE_SET="
@@ -2970,6 +2979,7 @@ firewire_deps="backend"
 ivtv_deps="backend v4l2"
 hdpvr_deps="backend v4l2"
 hdhomerun_deps="backend"
+vbox_deps="backend"
 ceton_deps="backend"
 mpegtsraw_demuxer_deps="merge_libavformat_mpegts_c"
 mythtranscode_deps="backend frontend"
@@ -3034,6 +3044,9 @@ distcc="yes"
 qmake_default="qmake"
 qmakespecs_default=""
 python_default="python"
+
+#Bluray
+bdj_type="j2se"
 
 # machine
 arch_default=$(uname -m)
@@ -3128,6 +3141,7 @@ enable ffmpeg_pthreads
 enable firewire
 enable frontend
 enable hdhomerun
+enable vbox
 enable ceton
 enable hdpvr
 enable ivtv
@@ -3138,14 +3152,12 @@ enable libcec
 enable libcrypto
 enable libdns_sd
 enable libxml2
-enable libudf
 enable lirc
 enable mheg
 enable mythtranscode
 enable opengl
 enable opengles
 enable opengl_video
-enable quartz_video
 enable symbol_visibility
 enable v4l1
 enable v4l2
@@ -3353,10 +3365,6 @@ for opt do
         --disable-ccache) disable ccache
         ;;
         --disable-distcc) disable distcc
-        ;;
-        --enable-quartz-video) enable quartz_video
-        ;;
-        --disable-quartz-video) disable quartz_video
         ;;
 # disabled due to abuse in Gentoo ebuild
         --disable-frontend)
@@ -4396,8 +4404,8 @@ if enabled proc_error_msg; then
     echo "      $PROC_FLAG"
     echo ""
     echo " If you are using a recent checkout from "
-    echo "   http://svn.mythtv.org/svn/trunk/mythtv "
-    echo " please e-mail the above to mythtv-users@mythtv.org"
+    echo "   https://github.com/MythTV/mythtv "
+    echo " please e-mail the above to mythtv-dev@mythtv.org"
     echo " With the subject \"configure did not detect my cpu\""
     echo ""
 fi
@@ -5232,9 +5240,9 @@ is_qmake5(){
 
 # qmake-qt5 /usr/lib64/qt5/bin/qmake /usr/lib/x86_64-linux-gnu/qt5/bin/qmake
 if [ x"$qmake" = "xqmake" ]; then
-    CHECK_QMAKE="qmake-qt5 /usr/lib64/qt5/bin/qmake /usr/lib/x86_64-linux-gnu/qt5/bin/qmake /usr/lib/i386-linux-gnu/qt5/bin/qmake $qmake"
+    CHECK_QMAKE="qmake-qt5 /usr/lib64/qt5/bin/qmake /usr/lib/x86_64-linux-gnu/qt5/bin/qmake /usr/lib/i386-linux-gnu/qt5/bin/qmake /usr/lib/arm-linux-gnueabihf/qt5/bin/qmake /usr/local/lib/qt5/bin/qmake $qmake"
 else
-    CHECK_QMAKE="$qmake qmake-qt5 /usr/lib64/qt5/bin/qmake /usr/lib/x86_64-linux-gnu/qt5/bin/qmake"
+    CHECK_QMAKE="$qmake qmake-qt5 /usr/lib64/qt5/bin/qmake /usr/lib/x86_64-linux-gnu/qt5/bin/qmake /usr/lib/i386-linux-gnu/qt5/bin/qmake /usr/lib/arm-linux-gnueabihf/qt5/bin/qmake /usr/local/lib/qt5/bin/qmake"
 fi
 # try to find a qt5 qmake to use
 found_qmake=''
@@ -5700,6 +5708,7 @@ check_header direct.h
 check_header dlfcn.h
 check_header dxva.h
 check_header dxva2api.h -D_WIN32_WINNT=0x0600
+check_header fcntl.h
 check_header io.h
 check_header libcrystalhd/libcrystalhd_if.h
 check_header mach/mach_time.h
@@ -5793,7 +5802,7 @@ if enabled taglib; then
             echo "Can't find taglib-config. Assuming 1.7 or later."
             taglib_minor="7"
         fi
-        tagprefix=`taglib-config --prefix`
+        tagprefix=${sysroot}`taglib-config --prefix`
         tagincludes="-I${tagprefix}/include"
         taglibs=`taglib-config --libs`
     fi
@@ -5805,6 +5814,26 @@ fi
 
 # Attempt to use libudev for mediamonitor
 enabled libudev && check_lib2 libudev.h udev_new -ludev || disable libudev
+
+# libmythbluray
+antbin=""
+if enabled bdjava; then
+    enabled x86_64 && java_arch=amd64
+    enabled x86_32 && java_arch=i386
+    enabled arm    && java_arch=arm
+
+    antbin=`which ant`
+    if test x"$antbin" = x"" ; then
+        die "ERROR: BD-J requires ANT, but ant was not found. Please install it."
+    fi
+
+    if test "$bdj_type" = "j2me"; then
+        enable bdj_j2me
+    fi
+
+    # Probably makes little sense to try to process Bluray menus without fontconfig
+    enable fontconfig
+fi
 
 disabled  zlib || check_lib   zlib.h      zlibVersion -lz   || disable  zlib
 disabled bzlib || check_lib2 bzlib.h BZ2_bzlibVersion -lbz2 || disable bzlib
@@ -6296,6 +6325,9 @@ enabled exiv2 && $(pkg-config --exists exiv2) ||
 if test $target_os = mingw32 ; then
     qt_inc="-I`cd $(${qmake} -query QT_INSTALL_HEADERS); pwd`"
     qt_libs="-L`cd $(${qmake} -query QT_INSTALL_LIBS) ; pwd`"
+elif test $target_os = darwin ; then
+    qt_inc="-I`cd $(${qmake} -query QT_INSTALL_HEADERS); pwd` -F`cd $(${qmake} -query QT_INSTALL_LIBS); pwd`"
+    qt_libs="-L`cd $(${qmake} -query QT_INSTALL_LIBS) ; pwd`"
 else
     qt_inc="-I${sysroot}/$(${qmake} -query QT_INSTALL_HEADERS)"
     qt_libs="-L${sysroot}/$(${qmake} -query QT_INSTALL_LIBS)"
@@ -6420,11 +6452,6 @@ if enabled taglib; then
     taglib_libs=`taglib-config --libs`
 fi
 
-enabled libudf && check_cc <<EOF || disable libudf
-#include <cdio/udf.h>
-int main(void){ return UDF_BLOCKSIZE > 0 ? 0 : 1; }
-EOF
-
 enabled x11 && check_lib X11/Xlib.h XQueryExtension -lX11 || disable x11
 enabled xrandr && check_lib X11/extensions/Xrandr.h XRRSelectInput -lXrandr || disable xrandr
 enabled xv && check_lib X11/extensions/Xv.h XvPutStill -lXv || disable xv
@@ -6445,14 +6472,10 @@ if enabled x11; then
     fi
 fi
 
-# Quartz video is Mac only and requires Carbon which is 32bit only
-enabled quartz_video && test $target_os = darwin && check_cpp_condition QtCore/qglobal.h "!defined(QT_MAC_USE_COCOA)" || disable quartz_video
-
 # CoreVideo in only available on Mac OS 10.4, or on 10.3 with QuickTime 7.
 # This checks for it, and some other calls that the module needs
 if test $target_os = darwin; then
     cat > $TMPC << EOF
-#include <QuartzCore/CVDisplayLink.h>
 #include <AGL/agl.h>
 int main( void ) { return aglGetCGLContext(0,0L); }
 EOF
@@ -6607,7 +6630,9 @@ esac
 
 if enabled gxx; then
     if enabled symbol_visibility; then
-        if expr "$gxx_version" : '4\.[2-9]\.' >/dev/null || expr "$gxx_version" : '[5-9]\..*\.' >/dev/null; then
+        # Don't check for patch levels in gcc4 series.
+        # See https://bugs.launchpad.net/ubuntu/+source/gcc-4.8/+bug/1360404
+        if expr "$gxx_version" : '4\.[2-9]' >/dev/null || expr "$gxx_version" : '[5-9]\..*\.' >/dev/null; then
             check_cxxflags -fvisibility-inlines-hidden
             append CCONFIG "use_hidesyms"
         else
@@ -6615,7 +6640,7 @@ if enabled gxx; then
             warn "--enable-symbol-visibility requires gcc 4.2 or higher"
         fi
     fi
-    if expr "$gxx_version" : '4\.[3-9]\.' >/dev/null || expr "$gxx_version" : '[5-9]\..*\.' >/dev/null; then
+    if expr "$gxx_version" : '4\.[3-9]' >/dev/null || expr "$gxx_version" : '[5-9]\..*\.' >/dev/null; then
         check_cxxflags -Wmissing-declarations
     fi
     check_cxxflags -Wno-switch
@@ -6984,6 +7009,7 @@ if enabled backend; then
   echo "DVB support               ${dvb-no} [$dvb_path]"
   echo "DVB-S2 support            ${fe_can_2g_modulation-no}"
   echo "HDHomeRun support         ${hdhomerun-no}"
+  echo "V@Box TV Gateway support  ${vbox-no}"
   echo "Ceton support             ${ceton-no}"
   echo "ASI support               ${asi-no}"
 fi
@@ -7012,7 +7038,6 @@ if enabled x11 ; then
 fi
   echo "OpenGL video              ${opengl_video-no}"
   if test x"$target_os" = x"darwin" ; then
-    echo "Quartz video              ${quartz_video-no}"
     echo "VDA support               ${vda-no}"
   fi
   if test x"$target_os" = x"mingw32" ; then
@@ -7035,6 +7060,8 @@ echo "Frontend                  ${frontend-no}"
 echo "Backend                   ${backend-no}"
 echo "OpenGL ES 2.0             ${opengles-no}"
 echo "mythlogserver             ${mythlogserver-no}"
+echo "BD-J (Bluray java)        ${bdjava-no}"
+echo "BD-J type                 ${bdj_type}"
 echo
 
 echo "# Bindings"
@@ -7184,6 +7211,10 @@ SLIB_INSTALL_EXTRA_LIB=${SLIB_INSTALL_EXTRA_LIB}
 SLIB_INSTALL_EXTRA_SHLIB=${SLIB_INSTALL_EXTRA_SHLIB}
 SAMPLES=$samples
 NOREDZONE_FLAGS=$noredzone_flags
+ANTBIN=$antbin
+BDJ_TYPE=$bdj_type
+JDK_HOME=$JDK_HOME
+JAVA_ARCH=$java_arch
 EOF
 
 get_version(){
@@ -7253,7 +7284,13 @@ cat > $TMPH <<EOF
 #define ASMALIGN(ZEROBITS) ".p2align " #ZEROBITS "\\n\\t"
 #define SIZEOF_INT $_sizeof_int
 #define SIZEOF_LONG $_sizeof_long
+#define JDK_HOME "$JDK_HOME"
+#define JAVA_ARCH "$java_arch"
 EOF
+
+# Code only checks whether HAVE_BDJ_J2ME is defined, not what value
+# it has been defined as so we mustn't define it if we don't have it.
+enabled bdj_j2me && echo "#define HAVE_BDJ_J2ME 1" >>$TMPH
 
 test -n "$assert_level" &&
     echo "#define ASSERT_LEVEL $assert_level" >>$TMPH
@@ -7363,6 +7400,10 @@ if enabled dvb && non_standard_header $dvb_path; then
   append CONFIG_INCLUDEPATH "$dvb_path"
 fi
 
+#if enabled vbox; then
+#    append CCONFIG "using_vbox"
+#fi
+
 if enabled libcec; then
   append CONFIG_DEFINES "using_libcec"
   if non_standard_header $libcec_path; then
@@ -7382,10 +7423,6 @@ fi
 if enabled taglib; then
     echo "CONFIG_TAGLIB_INCLUDES=$taglib_include" >> $TMPMAK
     echo "CONFIG_TAGLIB_LIBS=$taglib_libs" >> $TMPMAK
-fi
-
-if enabled libudf; then
-  append CCONFIG "using_libudf"
 fi
 
 if enabled x11; then
@@ -7556,6 +7593,9 @@ echo "Configuring libmythdvdnav..."
        ${qmakeconf} -o Makefile)
 echo "Configuring libsamplerate..."
 (cd external/libsamplerate ; \
+       ${qmakeconf} -o Makefile)
+echo "Configuring libudfread..."
+(cd external/libudfread ; \
        ${qmakeconf} -o Makefile)
 echo "Configuring minilzo..."
 (cd external/minilzo ; \

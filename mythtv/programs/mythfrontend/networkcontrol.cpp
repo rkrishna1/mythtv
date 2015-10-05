@@ -207,6 +207,7 @@ NetworkControl::NetworkControl() :
     keyMap["f23"]                    = Qt::Key_F23;
     keyMap["f24"]                    = Qt::Key_F24;
 
+    keyTextMap[Qt::Key_Space]           = " ";
     keyTextMap[Qt::Key_Plus]            = "+";
     keyTextMap[Qt::Key_Comma]           = ",";
     keyTextMap[Qt::Key_Minus]           = "-";
@@ -715,6 +716,26 @@ QString NetworkControl::processPlay(NetworkCommand *nc, int clientID)
                 gotAnswer = false;
 
                 MythEvent me(QString("MUSIC_COMMAND %1 GET_METADATA").arg(hostname));
+                gCoreContext->dispatch(me);
+
+                QTime timer;
+                timer.start();
+                while (timer.elapsed() < FE_SHORT_TO && !gotAnswer)
+                {
+                    qApp->processEvents();
+                    usleep(10000);
+                }
+
+                if (gotAnswer)
+                    return answer;
+
+                return "unknown";
+            }
+            else if (is_abbrev("getstatus", nc->getArg(2)))
+            {
+                gotAnswer = false;
+
+                MythEvent me(QString("MUSIC_COMMAND %1 GET_STATUS").arg(hostname));
                 gCoreContext->dispatch(me);
 
                 QTime timer;
@@ -1366,6 +1387,7 @@ QString NetworkControl::processHelp(NetworkCommand *nc)
             "play music setvolume N - Set volume to number (MythMusic)\r\n"
             "play music getvolume   - Get current volume (MythMusic)\r\n"
             "play music getmeta     - Get metadata for current track (MythMusic)\r\n"
+            "play music getstatus   - Get music player status playing/paused/stopped (MythMusic)\r\n"
             "play music file NAME   - Play specified file (MythMusic)\r\n"
             "play music track N     - Switch to specified track (MythMusic)\r\n"
             "play music url URL     - Play specified URL (MythMusic)\r\n";

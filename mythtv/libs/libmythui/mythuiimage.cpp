@@ -322,6 +322,17 @@ class ImageLoader
 
         if (image && !bFoundInCache)
         {
+            if (imProps.isReflected)
+                image->Reflect(imProps.reflectAxis, imProps.reflectShear,
+                               imProps.reflectScale, imProps.reflectLength,
+                               imProps.reflectSpacing);
+
+            if (imProps.isGreyscale)
+                image->ToGreyscale();
+
+            if (imProps.isOriented)
+                image->Orientation(imProps.orientation);
+
             // Even if an explicit size wasn't defined this image may still need
             // to be scaled because of a difference between the theme resolution
             // and the screen resolution. We want to avoid scaling twice.
@@ -362,17 +373,6 @@ class ImageLoader
                 QImage mask = imProps.GetMaskImageSubset(imageArea);
                 image->setAlphaChannel(mask.alphaChannel());
             }
-
-            if (imProps.isReflected)
-                image->Reflect(imProps.reflectAxis, imProps.reflectShear,
-                               imProps.reflectScale, imProps.reflectLength,
-                               imProps.reflectSpacing);
-
-            if (imProps.isGreyscale)
-                image->ToGreyscale();
-
-            if (imProps.isOriented)
-                image->Orientation(imProps.orientation);
 
             if (!imageReader)
                 GetMythUI()->CacheImage(cacheKey, image);
@@ -1282,17 +1282,17 @@ void MythUIImage::DrawSelf(MythPainter *p, int xoffset, int yoffset,
         if (!m_imageProperties.forceSize.isNull())
             area.setSize(area.size().expandedTo(currentImage->size()));
 
-        // Centre image in available space
-        int x = 0;
-        int y = 0;
+        // Centre image in available space, accounting for zoom
+        int x = 0, y = 0;
+        QRect visibleImage = m_Effects.GetExtent(currentImageArea.size());
 
-        if (area.width() > currentImageArea.width())
-            x = (area.width() - currentImageArea.width()) / 2;
+        if (area.width() > visibleImage.width())
+            x = area.width() / 2 + visibleImage.topLeft().x();
 
-        if (area.height() > currentImageArea.height())
-            y = (area.height() - currentImageArea.height()) / 2;
+        if (area.height() > visibleImage.height())
+            y = area.height() / 2 + visibleImage.topLeft().y();
 
-        if (x > 0 || y > 0)
+        if ((x > 0 || y > 0))
             area.translate(x, y);
 
         QRect srcRect;

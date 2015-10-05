@@ -43,6 +43,7 @@ HEADERS += mythuiexp.h mythuisimpletext.h mythuistatetracker.h
 HEADERS += mythuianimation.h mythuiscrollbar.h
 HEADERS += mythnotificationcenter.h mythnotificationcenter_private.h
 HEADERS += mythuicomposite.h mythnotification.h mythuidefines.h
+HEADERS += mythuimultifilebrowser.h
 
 SOURCES  = mythmainwindow.cpp mythpainter.cpp mythimage.cpp mythrect.cpp
 SOURCES += myththemebase.cpp  mythpainter_qimage.cpp mythpainter_yuva.cpp
@@ -63,7 +64,7 @@ SOURCES += mythdisplay.cpp mythuivideo.cpp mythudplistener.cpp
 SOURCES += mythuisimpletext.cpp mythuistatetracker.cpp
 SOURCES += mythuianimation.cpp mythuiscrollbar.cpp
 SOURCES += mythnotificationcenter.cpp mythnotification.cpp
-SOURCES += mythuicomposite.cpp
+SOURCES += mythuicomposite.cpp mythuimultifilebrowser.cpp
 SOURCES += mythuiwebbrowser.cpp
 
 inc.path = $${PREFIX}/include/mythtv/libmythui/
@@ -83,6 +84,7 @@ inc.files += mythuieditbar.h mythuifilebrowser.h mythuivideo.h
 inc.files += mythuiexp.h mythuisimpletext.h mythuiactions.h
 inc.files += mythuistatetracker.h mythuianimation.h mythuiscrollbar.h
 inc.files += mythnotificationcenter.h mythnotification.h mythuicomposite.h
+inc.files += mythuimultifilebrowser.h
 
 INSTALLS += inc
 
@@ -109,6 +111,13 @@ using_x11 {
     POST_TARGETDEPS += ../libmythnvctrl/libmythnvctrl-$${MYTH_LIB_EXT}
 }
 
+using_qtdbus {
+    QT      += dbus
+    DEFINES += USING_DBUS
+    HEADERS += screensaver-dbus.h
+    SOURCES += screensaver-dbus.cpp
+}
+
 macx {
     HEADERS += screensaver-osx.h   DisplayResOSX.h   util-osx.h
     SOURCES += screensaver-osx.cpp DisplayResOSX.cpp util-osx.cpp
@@ -116,7 +125,7 @@ macx {
     QMAKE_OBJECTIVE_CXXFLAGS += $$QMAKE_CXXFLAGS
     OBJECTIVE_HEADERS += util-osx-cocoa.h
     OBJECTIVE_SOURCES += util-osx-cocoa.mm
-    LIBS              += -framework Carbon -framework Cocoa -framework IOKit
+    LIBS              += -framework Cocoa -framework IOKit
 
     using_appleremote {
         HEADERS += AppleRemote.h   AppleRemoteListener.h

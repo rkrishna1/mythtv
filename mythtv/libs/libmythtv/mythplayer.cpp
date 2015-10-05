@@ -901,7 +901,7 @@ int MythPlayer::OpenFile(uint retries)
     livetv = player_ctx->tvchain && player_ctx->buffer->LiveMode();
 
     if (player_ctx->tvchain &&
-        player_ctx->tvchain->GetCardType(player_ctx->tvchain->GetCurPos()) ==
+        player_ctx->tvchain->GetInputType(player_ctx->tvchain->GetCurPos()) ==
         "DUMMY")
     {
         OpenDummy();
@@ -1013,9 +1013,7 @@ int MythPlayer::OpenFile(uint retries)
         {
             int cardid = player_ctx->recorder->GetRecorderNumber();
             QString channum = player_ctx->playingInfo->GetChanNum();
-            QString inputname;
-            int cardinputid = CardUtil::GetCardInputID(cardid, channum, inputname);
-            CardUtil::SetStartChannel(cardinputid, channum);
+            CardUtil::SetStartChannel(cardid, channum);
         }
     }
 
@@ -1374,6 +1372,7 @@ void MythPlayer::DisableCaptions(uint mode, bool osd_msg)
 
     QMutexLocker locker(&osdLock);
 
+    textDesired = textDisplayMode & kDisplayAllTextCaptions;
     QString msg = "";
     if (kDisplayNUVTeletextCaptions & mode)
         msg += tr("TXT CAP");
@@ -1410,7 +1409,8 @@ void MythPlayer::DisableCaptions(uint mode, bool osd_msg)
 void MythPlayer::EnableCaptions(uint mode, bool osd_msg)
 {
     QMutexLocker locker(&osdLock);
-    QString msg;
+    textDesired = mode & kDisplayAllTextCaptions;
+    QString msg = "";
     if ((kDisplayCC608 & mode) || (kDisplayCC708 & mode) ||
         (kDisplayAVSubtitle & mode) || kDisplayRawTextSubtitle & mode)
     {
@@ -2560,7 +2560,7 @@ void MythPlayer::SwitchToProgram(void)
         return;
     }
 
-    bool newIsDummy = player_ctx->tvchain->GetCardType(newid) == "DUMMY";
+    bool newIsDummy = player_ctx->tvchain->GetInputType(newid) == "DUMMY";
 
     SetPlayingInfo(*pginfo);
     Pause();
@@ -2590,8 +2590,8 @@ void MythPlayer::SwitchToProgram(void)
     if (!player_ctx->buffer->IsOpen())
     {
         LOG(VB_GENERAL, LOG_ERR, LOC + "SwitchToProgram's OpenFile failed " +
-            QString("(card type: %1).")
-            .arg(player_ctx->tvchain->GetCardType(newid)));
+            QString("(input type: %1).")
+            .arg(player_ctx->tvchain->GetInputType(newid)));
         LOG(VB_GENERAL, LOG_ERR, player_ctx->tvchain->toString());
         SetEof(kEofStateImmediate);
         SetErrored(tr("Error opening switch program buffer"));
@@ -2700,7 +2700,7 @@ void MythPlayer::JumpToProgram(void)
 
     inJumpToProgramPause = true;
 
-    bool newIsDummy = player_ctx->tvchain->GetCardType(newid) == "DUMMY";
+    bool newIsDummy = player_ctx->tvchain->GetInputType(newid) == "DUMMY";
     SetPlayingInfo(*pginfo);
 
     Pause();
@@ -2742,8 +2742,8 @@ void MythPlayer::JumpToProgram(void)
     if (!player_ctx->buffer->IsOpen())
     {
         LOG(VB_GENERAL, LOG_ERR, LOC + "JumpToProgram's OpenFile failed " +
-            QString("(card type: %1).")
-                .arg(player_ctx->tvchain->GetCardType(newid)));
+            QString("(input type: %1).")
+                .arg(player_ctx->tvchain->GetInputType(newid)));
         LOG(VB_GENERAL, LOG_ERR, player_ctx->tvchain->toString());
         SetEof(kEofStateImmediate);
         SetErrored(tr("Error opening jump program file buffer"));
@@ -2879,7 +2879,14 @@ void MythPlayer::EventStart(void)
     player_ctx->LockPlayingInfo(__FILE__, __LINE__);
     {
         if (player_ctx->playingInfo)
+        {
+            // When initial playback gets underway, we override the ProgramInfo
+            // flags such that future calls to GetBookmark() will consider only
+            // an actual bookmark and not progstart or lastplaypos information.
             player_ctx->playingInfo->SetIgnoreBookmark(false);
+            player_ctx->playingInfo->SetIgnoreProgStart(true);
+            player_ctx->playingInfo->SetAllowLastPlayPos(false);
+        }
     }
     player_ctx->UnlockPlayingInfo(__FILE__, __LINE__);
     commBreakMap.LoadMap(player_ctx, framesPlayed);
@@ -3609,8 +3616,15 @@ uint64_t MythPlayer::GetBookmark(void)
     else
     {
         player_ctx->LockPlayingInfo(__FILE__, __LINE__);
-        if (player_ctx->playingInfo)
-            bookmark = player_ctx->playingInfo->QueryBookmark();
+        if (const ProgramInfo *pi = player_ctx->playingInfo)
+        {
+            bookmark = pi->QueryBookmark();
+            // Disable progstart if the program has a cutlist.
+            if (bookmark == 0 && !pi->HasCutlist())
+                bookmark = pi->QueryProgStart();
+            if (bookmark == 0)
+                bookmark = pi->QueryLastPlayPos();
+        }
         player_ctx->UnlockPlayingInfo(__FILE__, __LINE__);
     }
 

@@ -461,6 +461,16 @@ void OSD::SetText(const QString &window, const InfoMap &map,
             }
         }
     }
+
+    if (map.contains("channelgroup"))
+    {
+        MythUIText *textArea = dynamic_cast<MythUIText *> (win->GetChild("channelgroup"));
+        if (textArea)
+        {
+            textArea->SetText(map["channelgroup"]);
+        }
+    }
+
     if (map.contains("inetref"))
     {
         MythUIImage *cover = dynamic_cast<MythUIImage *> (win->GetChild("coverart"));
@@ -665,8 +675,10 @@ bool OSD::DrawDirect(MythPainter* painter, QSize size, bool repaint)
     QList<MythScreenType*>::iterator it2 = notifications.begin();
     while (it2 != notifications.end())
     {
-        if (!GetNotificationCenter()->ScreenCreated(*it2))
+        if (!nc->ScreenCreated(*it2))
         {
+            LOG(VB_GUI, LOG_DEBUG, LOC + "Creating OSD Notification");
+
             if (!m_UIScaleOverride)
             {
                 OverrideUIScale(false);

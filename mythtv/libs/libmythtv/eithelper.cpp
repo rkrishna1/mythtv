@@ -1028,6 +1028,8 @@ static void init_fixup(QMap<uint64_t,uint> &fix)
     fix[ 2057LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2061LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2063LL << 32 | 2U << 16] = EITFixUp::kFixUK;
+    fix[ 2064LL << 32 | 2U << 16] = EITFixUp::kFixUK;
+    fix[ 2066LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2068LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2301LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2302LL << 32 | 2U << 16] = EITFixUp::kFixUK;
@@ -1053,6 +1055,8 @@ static void init_fixup(QMap<uint64_t,uint> &fix)
     fix[ 2052LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2055LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2056LL << 32 | 2U << 16] = EITFixUp::kFixUK;
+    fix[ 2076LL << 32 | 2U << 16] = EITFixUp::kFixUK;
+    fix[ 2081LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2315LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     fix[ 2316LL << 32 | 2U << 16] = EITFixUp::kFixUK;
     for (int i = 2402; i <= 2412; ++i)
@@ -1099,23 +1103,52 @@ static void init_fixup(QMap<uint64_t,uint> &fix)
 
     // RTL Subtitle parsing
     fix[      1089LL << 32 |     1  << 16] = // DVB-S
+    fix[ 1041LL << 32 | 1 << 16] = // DVB-S RTL Group HD Austria Transponder
+    fix[ 1057LL << 32 | 1 << 16] = // DVB-S RTL Group HD Transponder
         fix[   773LL << 32 |  8468U << 16] = // DVB-T Berlin/Brandenburg
         fix[  2819LL << 32 |  8468U << 16] = // DVB-T Niedersachsen + Bremen
         fix[  8706LL << 32 |  8468U << 16] = // DVB-T NRW
         fix[ 12801LL << 32 |  8468U << 16] = // DVB-T Bayern
         EITFixUp::kFixRTL;
 
+    // Mark HD+ channels as HDTV
+    fix[   1041LL << 32 |  1 << 16] = EITFixUp::kFixHDTV;
+    fix[   1055LL << 32 |  1 << 16] = EITFixUp::kFixHDTV;
+    fix[   1057LL << 32 |  1 << 16] = EITFixUp::kFixHDTV;
+    fix[   1109LL << 32 |  1 << 16] = EITFixUp::kFixHDTV;
+
+    // PRO7/SAT.1
+    fix[   1017LL << 32 |    1 << 16] = EITFixUp::kFixHDTV | EITFixUp::kFixP7S1;
+    fix[   1031LL << 32 |    1 << 16 | 5300] = EITFixUp::kFixHDTV | EITFixUp::kFixP7S1;
+    fix[   1031LL << 32 |    1 << 16 | 5301] = EITFixUp::kFixHDTV | EITFixUp::kFixP7S1;
+    fix[   1031LL << 32 |    1 << 16 | 5302] = EITFixUp::kFixHDTV | EITFixUp::kFixP7S1;
+    fix[   1031LL << 32 |    1 << 16 | 5303] = EITFixUp::kFixHDTV | EITFixUp::kFixP7S1;
+    fix[   1031LL << 32 |    1 << 16 | 5310] = EITFixUp::kFixP7S1;
+    fix[   1031LL << 32 |    1 << 16 | 5311] = EITFixUp::kFixP7S1;
+    fix[   1107LL << 32 |    1 << 16] = EITFixUp::kFixP7S1;
+    fix[   1082LL << 32 |    1 << 16] = EITFixUp::kFixP7S1;
+    fix[      5LL << 32 |  133 << 16 |   776] = EITFixUp::kFixP7S1;
+    fix[                  8468 << 16 | 16426] = EITFixUp::kFixP7S1; // ProSieben MAXX - DVB-T Rhein/Main
+    fix[   8707LL << 32 | 8468 << 16]         = EITFixUp::kFixP7S1; // ProSieben Sat.1 Mux - DVB-T Rhein/Main
+
     // Premiere EIT processing
     fix[   1LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
     fix[   2LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
     fix[   3LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
     fix[   4LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
-    fix[   5LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
     fix[   6LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[   8LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[  10LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[  11LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[  12LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[  13LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[  14LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
+    fix[  15LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
     fix[  17LL << 32 |  133 << 16] = EITFixUp::kFixPremiere;
-    // Mark Premiere HD and Discovery HD as HDTV
+    // Mark Premiere HD, AXN HD and Discovery HD as HDTV
     fix[   6LL << 32 |  133 << 16 | 129] = EITFixUp::kFixHDTV;
     fix[   6LL << 32 |  133 << 16 | 130] = EITFixUp::kFixHDTV;
+    fix[  10LL << 32 |  133 << 16 | 125] = EITFixUp::kFixHDTV;
 
     // Netherlands DVB-C
     fix[ 1000U << 16] = EITFixUp::kFixNL;

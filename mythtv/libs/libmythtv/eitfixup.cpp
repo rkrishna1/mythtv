@@ -132,6 +132,7 @@ EITFixUp::EITFixUp()
       m_RTLSubtitle3("^(?:Folge\\s)?(\\d{1,4}(?:\\/[IVX]+)?)\\s+(.{,5}[^\\.]{,120})[\\?!\\.]\\s*"),
       m_RTLSubtitle4("^Thema.{0,5}:\\s([^\\.]+)\\.\\s*"),
       m_RTLSubtitle5("^'(.+)'\\.\\s*"),
+      m_PRO7Subtitle(",{0,1}([^,]*),([^,]+)\\s{0,1}(\\d{4})$"),
       m_RTLEpisodeNo1("^(Folge\\s\\d{1,4})\\.*\\s*"),
       m_RTLEpisodeNo2("^(\\d{1,2}\\/[IVX]+)\\.*\\s*"),
       m_fiRerun("\\ ?Uusinta[a-zA-Z\\ ]*\\.?"),
@@ -240,6 +241,9 @@ void EITFixUp::Fix(DBEventEIT &event) const
 
     if (kFixRTL & event.fixup)
         FixRTL(event);
+
+    if (kFixP7S1 & event.fixup)
+        FixPRO7(event);
 
     if (kFixFI & event.fixup)
         FixFI(event);
@@ -1685,6 +1689,25 @@ void EITFixUp::FixRTL(DBEventEIT &event) const
             }
         }
     }
+}
+
+/** \fn EITFixUp::FixPRO7(DBEventEIT&) const
+ *  \brief Use this to standardise the PRO7/Sat1 group guide in Germany.
+ */
+void EITFixUp::FixPRO7(DBEventEIT &event) const
+{
+    QRegExp tmp = m_PRO7Subtitle;
+
+    int pos = tmp.indexIn(event.subtitle);
+    if (pos != -1)
+    {
+        if (event.airdate == 0)
+        {
+            event.airdate = tmp.cap(3).toUInt();
+        }
+        event.subtitle.replace(tmp, "");
+    }
+
 }
 
 /** \fn EITFixUp::FixFI(DBEventEIT&) const

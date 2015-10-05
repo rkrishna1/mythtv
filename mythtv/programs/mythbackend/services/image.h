@@ -24,6 +24,7 @@
 
 #include <QScriptEngine>
 #include "services/imageServices.h"
+#include "imageutils.h"
 #include "imagemetadata.h"
 
 
@@ -53,7 +54,6 @@ public:
 
     DTC::ImageMetadataInfoList* GetImageInfoListByFileName  ( const QString &FileName );
 
-    bool                        RemoveImageFromDB  ( int   Id );
     bool                        RemoveImage        ( int   Id );
     bool                        RenameImage        ( int   Id,
                                                      const QString &NewName );
@@ -62,10 +62,9 @@ public:
     bool                        StopSync           ( void );
     DTC::ImageSyncInfo*         GetSyncStatus      ( void );
 
-    bool                        CreateThumbnail    ( int   Id,
-                                                     bool  Recreate);
+    bool                        CreateThumbnail    (int   Id);
 private:
-    QString GetImage(int, ImageMetadata *, const QString & );
+    QString GetImage(int, ImageItem *, const QString & );
 
 };
 
@@ -152,13 +151,6 @@ class ScriptableImage : public QObject
             )
         }
 
-        bool RemoveImageFromDB( int Id )
-        {
-            SCRIPT_CATCH_EXCEPTION( false,
-                return m_obj.RemoveImageFromDB( Id );
-            )
-        }
-
         bool RemoveImage( int Id )
         {
             SCRIPT_CATCH_EXCEPTION( false,
@@ -195,10 +187,10 @@ class ScriptableImage : public QObject
             )
         }
 
-        bool CreateThumbnail    ( int   Id, bool Recreate )
+        bool CreateThumbnail    ( int   Id )
         {
             SCRIPT_CATCH_EXCEPTION( false,
-                return m_obj.CreateThumbnail( Id, Recreate );
+                return m_obj.CreateThumbnail( Id );
             )
         }
 };

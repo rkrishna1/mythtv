@@ -343,4 +343,97 @@ void TestEITFixups::testUKFixups9()
     QCOMPARE(event9.description, QString("Includes sport and weather"));
 }
 
+DBEventEIT *TestEITFixups::SimpleDBEventEIT (uint fixup, QString title, QString subtitle, QString description)
+{
+    DBEventEIT *event = new DBEventEIT (1, // channel id
+                                       title, // title
+                                       subtitle, // subtitle
+                                       description, // description
+                                       "", // category
+                                       ProgramInfo::kCategoryNone, // category_type
+                                       QDateTime::fromString("2015-02-28T19:40:00Z", Qt::ISODate),
+                                       QDateTime::fromString("2015-02-28T20:00:00Z", Qt::ISODate),
+                                       EITFixUp::kFixGenericDVB | fixup,
+                                       SUB_UNKNOWN,
+                                       AUD_STEREO,
+                                       VID_UNKNOWN,
+                                       0.0f, // star rating
+                                       "", // series id
+                                       "", // program id
+                                       0, // season
+                                       0, // episode
+                                       0); //episode total
+
+    return event;
+}
+
+void TestEITFixups::testDEPro7Sat1()
+{
+    EITFixUp fixup;
+
+    DBEventEIT *event = SimpleDBEventEIT (EITFixUp::kFixP7S1,
+                                         "Titel",
+                                         "Folgentitel, Mystery, USA 2011",
+                                         "Beschreibung");
+
+    PRINT_EVENT(*event);
+    fixup.Fix(*event);
+    PRINT_EVENT(*event);
+    QCOMPARE(event->title,    QString("Titel"));
+    QCOMPARE(event->subtitle, QString("Folgentitel"));
+    QCOMPARE(event->airdate,  (unsigned short) 2011);
+
+    DBEventEIT *event2 = SimpleDBEventEIT (EITFixUp::kFixP7S1,
+                                           "Titel",
+                                           "Kurznachrichten, D 2015",
+                                           "Beschreibung");
+    PRINT_EVENT(*event2);
+    fixup.Fix(*event2);
+    PRINT_EVENT(*event2);
+    QCOMPARE(event2->subtitle, QString(""));
+    QCOMPARE(event2->airdate,  (unsigned short) 2015);
+
+    DBEventEIT *event3 = SimpleDBEventEIT (EITFixUp::kFixP7S1,
+                                           "Titel",
+                                           "Folgentitel",
+                                           "Beschreibung");
+    PRINT_EVENT(*event3);
+    fixup.Fix(*event3);
+    PRINT_EVENT(*event3);
+    QCOMPARE(event3->subtitle, QString("Folgentitel"));
+    QCOMPARE(event3->airdate,  (unsigned short) 0);
+
+    DBEventEIT *event4 = SimpleDBEventEIT (EITFixUp::kFixP7S1,
+                                           "Titel",
+                                           "\"Lokal\", Ort, Doku-Soap, D 2015",
+                                           "Beschreibung");
+    PRINT_EVENT(*event4);
+    fixup.Fix(*event4);
+    PRINT_EVENT(*event4);
+    QCOMPARE(event4->subtitle, QString("\"Lokal\", Ort"));
+    QCOMPARE(event4->airdate,  (unsigned short) 2015);
+
+    DBEventEIT *event5 = SimpleDBEventEIT (EITFixUp::kFixP7S1,
+                                           "Titel",
+                                           "In Morpheus' Armen, Science-Fiction, CDN/USA 2006",
+                                           "Beschreibung");
+    PRINT_EVENT(*event5);
+    fixup.Fix(*event5);
+    PRINT_EVENT(*event5);
+    QCOMPARE(event5->subtitle, QString("In Morpheus' Armen"));
+    QCOMPARE(event5->airdate,  (unsigned short) 2006);
+
+    DBEventEIT *event6 = SimpleDBEventEIT (EITFixUp::kFixP7S1,
+                                           "Titel",
+                                           "Drei Kleintiere durchschneiden (1), Zeichentrick, J 2014",
+                                           "Beschreibung");
+    PRINT_EVENT(*event6);
+    fixup.Fix(*event6);
+    PRINT_EVENT(*event6);
+    QCOMPARE(event6->subtitle, QString("Drei Kleintiere durchschneiden (1)"));
+    QCOMPARE(event6->airdate,  (unsigned short) 2014);
+
+
+}
+
 QTEST_APPLESS_MAIN(TestEITFixups)

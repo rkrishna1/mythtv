@@ -89,7 +89,8 @@ inc2.files = $${inc.files}
 
 INSTALLS += inc inc2
 
-INCLUDEPATH += ../../external/qjsonwrapper/
+INCLUDEPATH += ../../external/qjsonwrapper/ ../../external/libudfread
+DEPENDPATH  +=  ../../external/libudfread
 
 DEFINES += RUNPREFIX=\\\"$${RUNPREFIX}\\\"
 DEFINES += LIBDIRNAME=\\\"$${LIBDIRNAME}\\\"
@@ -127,11 +128,6 @@ using_libdns_sd {
     !macx: LIBS += -ldns_sd
 }
 
-using_libudf {
-    DEFINES += USING_LIBUDF
-    LIBS += -ludf
-}
-
 using_x11:DEFINES += USING_X11
 
 mingw:LIBS += -lws2_32
@@ -160,4 +156,5 @@ QT += widgets
 
 include ( ../libs-targetfix.pro )
 
+LIBS += -L../../external/libudfread -lmythudfread-$$LIBVERSION
 LIBS += $$EXTRA_LIBS $$LATE_LIBS
